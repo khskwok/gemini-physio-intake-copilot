@@ -106,3 +106,17 @@ python -m http.server 5500
 ```
 
 Then open: `http://localhost:5500/live-session-preview/`
+
+### Enable Gemini Live API Session (Test)
+
+1. Open the preview page and enter your Gemini API key in the Gemini Live Connection card.
+2. Keep or update the model (default: `gemini-live-2.5-flash-preview`).
+3. Click Connect Live API and confirm the mode changes to "Live API connected".
+4. Click Start Session, type a patient response, and click Send.
+5. Verify agent replies appear in transcript from Live API.
+
+Notes:
+
+- Use a restricted API key for local testing only.
+- Do not commit API keys to source control.
+- If connection fails, stay in mock mode and validate network/key restrictions.

@@ -13,6 +13,11 @@ const dot = document.querySelector(".dot");
 const camToggle = document.getElementById("camToggle");
 const cameraFeed = document.getElementById("cameraFeed");
 const cameraPlaceholder = document.getElementById("cameraPlaceholder");
+const apiKeyInput = document.getElementById("apiKeyInput");
+const modelInput = document.getElementById("modelInput");
+const connectBtn = document.getElementById("connectBtn");
+const disconnectBtn = document.getElementById("disconnectBtn");
+const modeChip = document.getElementById("modeChip");
 
 const c1 = document.getElementById("c1");
 const c2 = document.getElementById("c2");
@@ -22,6 +27,11 @@ const c4 = document.getElementById("c4");
 let sessionActive = false;
 let agentSpeaking = false;
 let stream;
+let liveSession = null;
+let liveConnected = false;
+let GoogleGenAIRef = null;
+let backendConnected = false;
+const DEFAULT_LIVE_MODEL = "gemini-2.5-flash-preview-native-audio-dialog";
 
 const predefinedAgentTurns = [
   "Hi, I am your intake copilot. To start, where is your main pain located?",
@@ -56,6 +66,61 @@ function markDone(item) {
   item.classList.add("done");
 }
 
+function updateModeChip() {
+  if (liveConnected) {
+    modeChip.textContent = "Live API connected";
+    modeChip.classList.add("live");
+    return;
+  }
+
+  if (backendConnected) {
+    modeChip.textContent = "Cloud backend mode";
+    modeChip.classList.add("live");
+    return;
+  }
+
+  modeChip.textContent = "Mock mode";
+  modeChip.classList.remove("live");
+}
+
+async function detectBackendMode() {
+  if (window.location.protocol === "file:") {
+    return;
+  }
+
+  try {
+    const response = await fetch("/api/health");
+    if (!response.ok) {
+      return;
+    }
+
+    const data = await response.json();
+    if (!data?.ok) {
+      return;
+    }
+
+    backendConnected = true;
+    connectBtn.disabled = true;
+    disconnectBtn.disabled = true;
+    apiKeyInput.disabled = true;
+    apiKeyInput.placeholder = "Managed by Cloud Secret Manager";
+    addMessage("system", "Secure backend detected. Using Cloud Run API proxy mode.");
+    updateModeChip();
+  } catch {
+    // Keep local modes available.
+  }
+}
+
+function loadSavedConfig() {
+  apiKeyInput.value = localStorage.getItem("gemini_api_key") || "";
+  modelInput.value = localStorage.getItem("gemini_model") || DEFAULT_LIVE_MODEL;
+}
+
+function saveConfig() {
+  localStorage.setItem("gemini_api_key", apiKeyInput.value.trim());
+  localStorage.setItem("gemini_model", modelInput.value.trim());
+}
+
 function agentSpeak(text) {
   agentSpeaking = true;
   setTurn("Agent speaking", true);
@@ -81,6 +146,103 @@ function nextAgentTurn() {
   agentSpeak(line);
 }
 
+function extractTextFromLiveMessage(message) {
+  if (!message) {
+    return "";
+  }
+  if (typeof message === "string") {
+    return message;
+  }
+  if (message.text) {
+    return message.text;
+  }
+
+  const serverContent = message.serverContent || {};
+  const modelTurn = serverContent.modelTurn || {};
+  const parts = modelTurn.parts || [];
+  return parts
+    .map((part) => part.text)
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+}
+
+async function connectLiveApi() {
+  const apiKey = apiKeyInput.value.trim();
+  const model = modelInput.value.trim() || DEFAULT_LIVE_MODEL;
+
+  if (!apiKey) {
+    addMessage("system", "Enter a Gemini API key before connecting.");
+    return;
+  }
+
+  connectBtn.disabled = true;
+  saveConfig();
+  addMessage("system", "Connecting to Gemini Live API...");
+
+  try {
+    if (!GoogleGenAIRef) {
+      const mod = await import("https://esm.sh/@google/genai");
+      GoogleGenAIRef = mod.GoogleGenAI;
+    }
+
+    const ai = new GoogleGenAIRef({ apiKey });
+    liveSession = await ai.live.connect({
+      model,
+      config: {
+        responseModalities: ["AUDIO", "TEXT"]
+      },
+      callbacks: {
+        onopen: () => {
+          liveConnected = true;
+          disconnectBtn.disabled = false;
+          updateModeChip();
+          addMessage("system", `Live API connected with model ${model}.`);
+        },
+        onmessage: (msg) => {
+          const text = extractTextFromLiveMessage(msg);
+          if (!text) {
+            return;
+          }
+          agentSpeaking = false;
+          interruptBtn.disabled = true;
+          setTurn("Patient turn", false);
+          addMessage("agent", text);
+        },
+        onerror: (err) => {
+          addMessage("system", `Live API error: ${err?.message || "Unknown error"}`);
+        },
+        onclose: () => {
+          liveConnected = false;
+          liveSession = null;
+          connectBtn.disabled = false;
+          disconnectBtn.disabled = true;
+          updateModeChip();
+          addMessage("system", "Live API disconnected.");
+        }
+      }
+    });
+  } catch (err) {
+    liveConnected = false;
+    liveSession = null;
+    connectBtn.disabled = false;
+    disconnectBtn.disabled = true;
+    updateModeChip();
+    addMessage("system", `Failed to connect: ${err?.message || "Unknown error"}`);
+  }
+}
+
+function disconnectLiveApi() {
+  if (liveSession) {
+    liveSession.close();
+  }
+  liveConnected = false;
+  liveSession = null;
+  connectBtn.disabled = false;
+  disconnectBtn.disabled = true;
+  updateModeChip();
+}
+
 function startSession() {
   sessionActive = true;
   turnIndex = 0;
@@ -98,9 +260,19 @@ function startSession() {
   sessionStatusChip.classList.remove("idle", "complete");
   sessionStatusChip.classList.add("live");
 
-  addMessage("system", "Session started. Gemini Live preview mode enabled.");
+  if (liveConnected) {
+    addMessage("system", "Session started with Gemini Live API.");
+  } else if (backendConnected) {
+    addMessage("system", "Session started with secure Cloud backend mode.");
+  } else {
+    addMessage("system", "Session started in mock mode.");
+  }
+
   markDone(c1);
-  nextAgentTurn();
+
+  if (!liveConnected) {
+    nextAgentTurn();
+  }
 }
 
 function interruptAgent() {
@@ -162,16 +334,83 @@ function endSession() {
   generateSummary();
 }
 
+async function sendLiveTurn(text) {
+  if (!liveSession) {
+    return;
+  }
+
+  agentSpeaking = true;
+  setTurn("Agent speaking", true);
+  interruptBtn.disabled = false;
+
+  try {
+    await liveSession.sendClientContent({
+      turns: [
+        {
+          role: "user",
+          parts: [{ text }]
+        }
+      ],
+      turnComplete: true
+    });
+    markDone(c3);
+  } catch (err) {
+    agentSpeaking = false;
+    setTurn("Patient turn", false);
+    interruptBtn.disabled = true;
+    addMessage("system", `Send failed: ${err?.message || "Unknown error"}`);
+  }
+}
+
+async function sendBackendTurn(text) {
+  agentSpeaking = true;
+  setTurn("Agent speaking", true);
+  interruptBtn.disabled = false;
+
+  try {
+    const response = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text })
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const payload = await response.json();
+    const reply = payload?.reply?.trim() || "No response generated.";
+    addMessage("agent", reply);
+    markDone(c3);
+  } catch (err) {
+    addMessage("system", `Cloud backend request failed: ${err?.message || "Unknown error"}`);
+  } finally {
+    agentSpeaking = false;
+    interruptBtn.disabled = true;
+    setTurn("Patient turn", false);
+  }
+}
+
 function handlePatientInput(text) {
   if (!sessionActive || !text.trim()) {
     return;
   }
 
-  addMessage("patient", text.trim());
-  patientReplies.push(text.trim());
+  const clean = text.trim();
+  addMessage("patient", clean);
+  patientReplies.push(clean);
   markDone(c2);
-
   patientInput.value = "";
+
+  if (liveConnected) {
+    sendLiveTurn(clean);
+    return;
+  }
+
+  if (backendConnected) {
+    sendBackendTurn(clean);
+    return;
+  }
 
   if (turnIndex < predefinedAgentTurns.length) {
     nextAgentTurn();
@@ -204,6 +443,8 @@ async function toggleCamera(enabled) {
 startBtn.addEventListener("click", startSession);
 interruptBtn.addEventListener("click", interruptAgent);
 endBtn.addEventListener("click", endSession);
+connectBtn.addEventListener("click", connectLiveApi);
+disconnectBtn.addEventListener("click", disconnectLiveApi);
 
 patientForm.addEventListener("submit", (e) => {
   e.preventDefault();
@@ -215,5 +456,8 @@ camToggle.addEventListener("change", (e) => {
 });
 
 setTurn("Ready", false);
-addMessage("system", "Preview UI loaded. Click Start Session to simulate Gemini Live intake.");
+addMessage("system", "Preview UI loaded. Connect Live API or continue in mock mode.");
 sessionStatusChip.classList.add("idle");
+loadSavedConfig();
+updateModeChip();
+detectBackendMode();

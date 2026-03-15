@@ -2,6 +2,12 @@
 
 This document describes how to deploy Gemini Physio Intake Copilot.
 
+## Current Deployment Target
+
+- Project: `physio-intake-copilot`
+- Region: `us-central1`
+- Cloud Run service: `physio-intake-copilot`
+
 ## Execution Modes
 
 This deployment plan is designed to be both:
@@ -103,7 +109,7 @@ gcloud services enable \
 
 ## Configuration and Secrets
 
-Store sensitive values in Secret Manager, not in source code.
+Store sensitive values in Secret Manager (Google Cloud equivalent of key vault), not in source code.
 
 Suggested secrets:
 
@@ -127,59 +133,153 @@ echo -n "NEW_VALUE" | gcloud secrets versions add GEMINI_API_KEY \
   --project "$PROJECT_ID"
 ```
 
-## Backend Deployment (Cloud Run)
+## Deploy This Repository to Cloud Run (Recommended)
 
-### 1. Build Container Image
+This repository now includes a Cloud Run server (`server.js`) that:
+
+- Serves the UI from `live-session-preview/`
+- Uses Secret Manager-injected `GEMINI_API_KEY` on the server side
+- Exposes `/api/chat` so browser clients do not store or send API keys
+
+Set deployment variables:
 
 ```bash
-gcloud builds submit \
-  --tag REGION-docker.pkg.dev/$PROJECT_ID/YOUR_REPO/physio-backend:latest \
+REGION="us-central1"
+REPO="physio-intake-copilot"
+SERVICE="physio-intake-copilot"
+IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$REPO/$SERVICE:latest"
+```
+
+Create Artifact Registry repository (run once):
+
+```bash
+gcloud artifacts repositories create "$REPO" \
+  --repository-format=docker \
+  --location="$REGION" \
+  --description="Docker images for Gemini Physio Intake Copilot" \
   --project "$PROJECT_ID"
 ```
 
-### 2. Deploy to Cloud Run
+Create the Gemini key secret (run once):
 
 ```bash
-gcloud run deploy physio-intake-backend \
-  --image REGION-docker.pkg.dev/$PROJECT_ID/YOUR_REPO/physio-backend:latest \
-  --region REGION \
+echo -n "YOUR_GEMINI_API_KEY" | gcloud secrets create GEMINI_API_KEY \
+  --data-file=- \
+  --project "$PROJECT_ID"
+```
+
+If secret already exists, add a new version:
+
+```bash
+echo -n "YOUR_GEMINI_API_KEY" | gcloud secrets versions add GEMINI_API_KEY \
+  --data-file=- \
+  --project "$PROJECT_ID"
+```
+
+Build and push image with Cloud Build:
+
+```bash
+gcloud builds submit --tag "$IMAGE" --project "$PROJECT_ID"
+```
+
+Deploy Cloud Run service with Secret Manager binding:
+
+```bash
+gcloud run deploy "$SERVICE" \
+  --image "$IMAGE" \
+  --region "$REGION" \
   --platform managed \
   --allow-unauthenticated \
-  --set-env-vars NODE_ENV=production \
-  --set-secrets GEMINI_API_KEY=GEMINI_API_KEY:latest,DB_CONNECTION_STRING=DB_CONNECTION_STRING:latest \
+  --set-env-vars GEMINI_MODEL=gemini-2.0-flash \
+  --set-secrets GEMINI_API_KEY=GEMINI_API_KEY:latest \
   --project "$PROJECT_ID"
 ```
 
-### 3. Capture Service URL
+Get service URL:
 
 ```bash
-gcloud run services describe physio-intake-backend \
-  --region REGION \
+gcloud run services describe "$SERVICE" \
+  --region "$REGION" \
   --format='value(status.url)' \
   --project "$PROJECT_ID"
 ```
 
-## Frontend Deployment
+Quick smoke tests:
 
-The frontend can be hosted using your preferred static hosting approach (for example, Cloud Run static container or Firebase Hosting).
+```bash
+SERVICE_URL="$(gcloud run services describe "$SERVICE" --region "$REGION" --format='value(status.url)' --project "$PROJECT_ID")"
 
-Minimum frontend runtime settings:
+# Health
+curl "$SERVICE_URL/api/health"
 
-- PUBLIC_BACKEND_URL: Cloud Run backend URL
-- PUBLIC_GEMINI_MODEL: Gemini model id used for live sessions
-- PUBLIC_ENV: dev, staging, or prod
+# Chat
+curl -X POST "$SERVICE_URL/api/chat" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"knee pain when climbing stairs for 2 weeks"}'
+```
 
-### Option A: Frontend on Cloud Run
+## Post-Deployment Live Status Check Script
 
-1. Build frontend assets.
-2. Serve static build via lightweight web server image.
-3. Deploy using `gcloud run deploy` similarly to backend.
+Run this every time after deployment:
 
-### Option B: Frontend on Firebase Hosting
+```bash
+powershell -ExecutionPolicy Bypass -File ./scripts/post_deploy_live_status_check.ps1 \
+  -ProjectId "$PROJECT_ID" \
+  -Region "$REGION" \
+  -Service "$SERVICE"
+```
 
-1. Install Firebase CLI.
-2. Configure hosting target for project.
-3. Deploy static build output.
+Expected behavior:
+
+- Exit code 0: deployment is healthy and Gemini response path is working.
+- Exit code 1: deployment has an operational issue (health, auth, quota, or model mismatch).
+
+The script checks:
+
+- Cloud Run service URL resolution
+- `/api/health` status
+- `/api/chat` response with a probe prompt
+- Error classification hints for 429 quota and 400/401/403 auth or model issues
+
+## Troubleshooting
+
+### 500 on /api/chat with API_KEY_INVALID
+
+Symptom:
+
+- `/api/health` returns 200
+- `/api/chat` returns 500 and logs show `API_KEY_INVALID`
+
+Cause:
+
+- `GEMINI_API_KEY` in Secret Manager is placeholder, revoked, or invalid.
+
+Fix:
+
+```bash
+echo -n "YOUR_NEW_VALID_GEMINI_KEY" | gcloud secrets versions add GEMINI_API_KEY \
+  --data-file=- \
+  --project "$PROJECT_ID"
+```
+
+Notes:
+
+- No redeploy required when Cloud Run uses `GEMINI_API_KEY:latest`.
+- Wait 20-30 seconds, then re-test `/api/chat`.
+
+### Permission denied on secret during deploy
+
+Grant Secret Accessor to the Cloud Run runtime service account:
+
+```bash
+PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')"
+RUNTIME_SA="$PROJECT_NUMBER-compute@developer.gserviceaccount.com"
+
+gcloud secrets add-iam-policy-binding GEMINI_API_KEY \
+  --member="serviceAccount:$RUNTIME_SA" \
+  --role="roles/secretmanager.secretAccessor" \
+  --project "$PROJECT_ID"
+```
 
 ## Database Setup
 
@@ -250,10 +350,10 @@ After each deployment, verify:
 Cloud Run rollback example:
 
 ```bash
-gcloud run services update-traffic physio-intake-backend \
-  --region REGION \
+gcloud run services update-traffic "$SERVICE" \
+  --region "$REGION" \
   --to-revisions PREVIOUS_REVISION=100 \
-  --project YOUR_PROJECT_ID
+  --project "$PROJECT_ID"
 ```
 
 ## CI/CD Recommendation
@@ -280,13 +380,13 @@ For pilot use:
 
 ```bash
 # Set active project
-gcloud config set project YOUR_PROJECT_ID
+gcloud config set project "$PROJECT_ID"
 
 # List Cloud Run services
-gcloud run services list --region REGION
+gcloud run services list --region "$REGION"
 
 # Tail backend logs
-gcloud run services logs tail physio-intake-backend --region REGION --project YOUR_PROJECT_ID
+gcloud run services logs tail "$SERVICE" --region "$REGION" --project "$PROJECT_ID"
 ```
 
 ## Cleanup and Cost Control
@@ -296,15 +396,13 @@ Use this section after demos or test deployments to remove resources and avoid u
 ### 1. Delete Cloud Run Services
 
 ```bash
-gcloud run services delete physio-intake-backend \
-  --region REGION \
+gcloud run services delete "$SERVICE" \
+  --region "$REGION" \
   --project "$PROJECT_ID" \
   --quiet
 
-gcloud run services delete physio-intake-frontend \
-  --region REGION \
-  --project "$PROJECT_ID" \
-  --quiet
+# If you created a separate frontend service name, delete it too.
+# gcloud run services delete "YOUR_FRONTEND_SERVICE" --region "$REGION" --project "$PROJECT_ID" --quiet
 ```
 
 ### 2. Delete Artifact Registry Images or Repository
@@ -312,14 +410,14 @@ gcloud run services delete physio-intake-frontend \
 Delete unneeded images:
 
 ```bash
-gcloud artifacts docker images list REGION-docker.pkg.dev/$PROJECT_ID/YOUR_REPO --project "$PROJECT_ID"
+gcloud artifacts docker images list "$REGION-docker.pkg.dev/$PROJECT_ID/$REPO" --project "$PROJECT_ID"
 ```
 
 Delete entire repository (only if safe):
 
 ```bash
-gcloud artifacts repositories delete YOUR_REPO \
-  --location REGION \
+gcloud artifacts repositories delete "$REPO" \
+  --location "$REGION" \
   --project "$PROJECT_ID" \
   --quiet
 ```
@@ -357,7 +455,7 @@ gcloud services disable secretmanager.googleapis.com --project "$PROJECT_ID"
 
 ```bash
 gcloud run services list --region REGION --project "$PROJECT_ID"
-gcloud artifacts repositories list --location REGION --project "$PROJECT_ID"
+gcloud artifacts repositories list --location "$REGION" --project "$PROJECT_ID"
 gcloud secrets list --project "$PROJECT_ID"
 ```
 

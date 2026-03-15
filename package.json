@@ -1,0 +1,14 @@
+{
+  "name": "gemini-physio-intake-copilot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cloud Run host for Gemini Physio Intake Copilot preview UI and API proxy",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@google/genai": "^1.14.0",
+    "express": "^4.21.2"
+  }
+}
