@@ -140,6 +140,18 @@ This repository now includes a Cloud Run server (`server.js`) that:
 - Serves the UI from `live-session-preview/`
 - Uses Secret Manager-injected `GEMINI_API_KEY` on the server side
 - Exposes `/api/chat` so browser clients do not store or send API keys
+- Exposes `/api/config` so the frontend can load runtime configuration instead of hardcoding models
+- Exposes `/api/live/health` so deployments can verify Gemini Live model readiness
+
+Runtime parameters are environment-driven. The app reads these variables at startup:
+
+- `GEMINI_MODEL` for server-side text chat
+- `GEMINI_LIVE_MODEL` for Live API sessions
+- `GEMINI_LIVE_API_VERSION` for Live API version selection
+- `GEMINI_LIVE_RESPONSE_MODALITIES` as a comma-separated list, for example `AUDIO`
+- `GEMINI_LIVE_INPUT_AUDIO_TRANSCRIPTION` as `true` or `false`
+- `GEMINI_LIVE_OUTPUT_AUDIO_TRANSCRIPTION` as `true` or `false`
+- `GEMINI_LIVE_VOICE_NAME` for an optional prebuilt voice
 
 Set deployment variables:
 
@@ -190,7 +202,7 @@ gcloud run deploy "$SERVICE" \
   --region "$REGION" \
   --platform managed \
   --allow-unauthenticated \
-  --set-env-vars GEMINI_MODEL=gemini-2.0-flash \
+  --set-env-vars GEMINI_MODEL=gemini-2.5-flash,GEMINI_LIVE_MODEL=gemini-2.5-flash-native-audio-preview-12-2025,GEMINI_LIVE_API_VERSION=v1beta,GEMINI_LIVE_RESPONSE_MODALITIES=AUDIO,GEMINI_LIVE_INPUT_AUDIO_TRANSCRIPTION=true,GEMINI_LIVE_OUTPUT_AUDIO_TRANSCRIPTION=true \
   --set-secrets GEMINI_API_KEY=GEMINI_API_KEY:latest \
   --project "$PROJECT_ID"
 ```
@@ -211,6 +223,12 @@ SERVICE_URL="$(gcloud run services describe "$SERVICE" --region "$REGION" --form
 
 # Health
 curl "$SERVICE_URL/api/health"
+
+# Runtime config
+curl "$SERVICE_URL/api/config"
+
+# Gemini Live readiness
+curl "$SERVICE_URL/api/live/health"
 
 # Chat
 curl -X POST "$SERVICE_URL/api/chat" \
@@ -237,7 +255,10 @@ Expected behavior:
 The script checks:
 
 - Cloud Run service URL resolution
-- `/api/health` status
+- `/` returns the latest live-voice UI markup
+- `/styles.css` and `/app.js` return the latest deployed assets
+- `/api/health` status and configured models
+- `/api/live/health` readiness for the configured Gemini Live model
 - `/api/chat` response with a probe prompt
 - Error classification hints for 429 quota and 400/401/403 auth or model issues
 

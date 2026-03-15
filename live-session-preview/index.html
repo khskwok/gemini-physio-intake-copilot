@@ -40,7 +40,7 @@
             </label>
             <label>
               Model
-              <input id="modelInput" type="text" value="gemini-2.5-flash-preview-native-audio-dialog" />
+              <input id="modelInput" type="text" placeholder="Configured by runtime" />
             </label>
           </div>
           <div class="config-actions">
@@ -52,6 +52,7 @@
 
         <div class="control-row">
           <button id="startBtn" class="btn btn-primary">Start Session</button>
+          <button id="voiceBtn" class="btn btn-secondary" disabled>Hold to Talk</button>
           <button id="interruptBtn" class="btn btn-secondary" disabled>Interrupt Agent</button>
           <button id="endBtn" class="btn btn-danger" disabled>End Session</button>
           <label class="toggle-wrap" for="camToggle">

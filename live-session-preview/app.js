@@ -1,4 +1,5 @@
 const startBtn = document.getElementById("startBtn");
+const voiceBtn = document.getElementById("voiceBtn");
 const interruptBtn = document.getElementById("interruptBtn");
 const endBtn = document.getElementById("endBtn");
 const patientInput = document.getElementById("patientInput");
@@ -31,7 +32,26 @@ let liveSession = null;
 let liveConnected = false;
 let GoogleGenAIRef = null;
 let backendConnected = false;
-const DEFAULT_LIVE_MODEL = "gemini-2.5-flash-preview-native-audio-dialog";
+const FALLBACK_CONFIG = {
+  mode: "local-preview",
+  chatModel: "gemini-2.5-flash",
+  live: {
+    model: "gemini-2.5-flash-native-audio-preview-12-2025",
+    apiVersion: "v1beta",
+    responseModalities: ["AUDIO"],
+    inputAudioTranscription: true,
+    outputAudioTranscription: true,
+    voiceName: ""
+  }
+};
+let appConfig = structuredClone(FALLBACK_CONFIG);
+let audioContext = null;
+let micStream = null;
+let micSourceNode = null;
+let micProcessorNode = null;
+let isPressToTalkActive = false;
+let playbackChain = Promise.resolve();
+let playbackGeneration = 0;
 
 const predefinedAgentTurns = [
   "Hi, I am your intake copilot. To start, where is your main pain located?",
@@ -83,27 +103,268 @@ function updateModeChip() {
   modeChip.classList.remove("live");
 }
 
+function getActiveLiveModel() {
+  return modelInput.value.trim() || appConfig.live.model;
+}
+
+function buildLiveConnectConfig() {
+  const live = appConfig.live || FALLBACK_CONFIG.live;
+  const config = {
+    responseModalities: live.responseModalities || ["AUDIO"]
+  };
+
+  if (live.outputAudioTranscription) {
+    config.outputAudioTranscription = {};
+  }
+
+  if (live.inputAudioTranscription) {
+    config.inputAudioTranscription = {};
+  }
+
+  if (live.voiceName) {
+    config.speechConfig = {
+      voiceConfig: {
+        prebuiltVoiceConfig: {
+          voiceName: live.voiceName
+        }
+      }
+    };
+  }
+
+  return config;
+}
+
+function arrayBufferToBase64(buffer) {
+  let binary = "";
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+
+function base64ToArrayBuffer(base64) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
+
+function floatTo16BitPcm(float32Array) {
+  const pcm = new Int16Array(float32Array.length);
+  for (let i = 0; i < float32Array.length; i += 1) {
+    const s = Math.max(-1, Math.min(1, float32Array[i]));
+    pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+  return pcm;
+}
+
+function parsePcmRate(mimeType) {
+  const match = /rate=(\d+)/i.exec(mimeType || "");
+  if (!match) {
+    return 16000;
+  }
+  return Number(match[1]) || 16000;
+}
+
+function enqueueAudioPlayback(task) {
+  playbackChain = playbackChain
+    .then(task)
+    .catch(() => {
+      // Keep queue alive after individual playback errors.
+    });
+}
+
+function clearPlaybackQueue() {
+  playbackGeneration += 1;
+}
+
+function playPcmAudio(base64Data, mimeType, generation) {
+  if (!audioContext) {
+    audioContext = new AudioContext();
+  }
+
+  const sampleRate = parsePcmRate(mimeType);
+  const pcmBytes = base64ToArrayBuffer(base64Data);
+  const pcmView = new Int16Array(pcmBytes);
+  const frameCount = pcmView.length;
+  const audioBuffer = audioContext.createBuffer(1, frameCount, sampleRate);
+  const channel = audioBuffer.getChannelData(0);
+  for (let i = 0; i < frameCount; i += 1) {
+    channel[i] = pcmView[i] / 0x8000;
+  }
+
+  return new Promise((resolve) => {
+    if (generation !== playbackGeneration) {
+      resolve();
+      return;
+    }
+
+    const src = audioContext.createBufferSource();
+    src.buffer = audioBuffer;
+    src.connect(audioContext.destination);
+    src.onended = () => resolve();
+    src.start(0);
+  });
+}
+
+function playEncodedAudio(base64Data, mimeType, generation) {
+  return new Promise((resolve) => {
+    if (generation !== playbackGeneration) {
+      resolve();
+      return;
+    }
+
+    const audio = new Audio(`data:${mimeType};base64,${base64Data}`);
+    audio.onended = () => resolve();
+    audio.onerror = () => resolve();
+    audio.play().catch(() => resolve());
+  });
+}
+
+function playAudioPart(inlineData) {
+  if (!inlineData?.data) {
+    return;
+  }
+
+  const mimeType = inlineData.mimeType || "audio/pcm;rate=16000";
+  const generation = playbackGeneration;
+
+  enqueueAudioPlayback(async () => {
+    if (/audio\/pcm/i.test(mimeType)) {
+      await playPcmAudio(inlineData.data, mimeType, generation);
+      return;
+    }
+
+    await playEncodedAudio(inlineData.data, mimeType, generation);
+  });
+}
+
+function extractAudioParts(message) {
+  const serverContent = message?.serverContent || {};
+  const modelTurn = serverContent.modelTurn || {};
+  const parts = modelTurn.parts || [];
+  return parts
+    .map((part) => part.inlineData)
+    .filter((inlineData) => inlineData?.mimeType?.startsWith("audio/") && inlineData?.data);
+}
+
+function updateVoiceButtonState() {
+  const enabled = sessionActive && liveConnected;
+  voiceBtn.disabled = !enabled;
+  if (!enabled) {
+    voiceBtn.classList.remove("recording");
+    voiceBtn.textContent = "Hold to Talk";
+  }
+}
+
+async function ensureMicPipeline() {
+  if (micProcessorNode) {
+    return;
+  }
+
+  micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  audioContext = audioContext || new AudioContext({ sampleRate: 16000 });
+  micSourceNode = audioContext.createMediaStreamSource(micStream);
+  micProcessorNode = audioContext.createScriptProcessor(2048, 1, 1);
+
+  micProcessorNode.onaudioprocess = (event) => {
+    if (!isPressToTalkActive || !liveSession || !liveConnected) {
+      return;
+    }
+
+    const input = event.inputBuffer.getChannelData(0);
+    const pcm16 = floatTo16BitPcm(input);
+    liveSession.sendRealtimeInput({
+      audio: {
+        mimeType: `audio/pcm;rate=${audioContext.sampleRate}`,
+        data: arrayBufferToBase64(pcm16.buffer)
+      }
+    });
+  };
+
+  micSourceNode.connect(micProcessorNode);
+  micProcessorNode.connect(audioContext.destination);
+}
+
+async function startPressToTalk() {
+  if (!sessionActive || !liveConnected || !liveSession) {
+    return;
+  }
+
+  try {
+    await ensureMicPipeline();
+    isPressToTalkActive = true;
+    voiceBtn.classList.add("recording");
+    voiceBtn.textContent = "Recording... Release to Send";
+    setTurn("Patient speaking", true);
+  } catch {
+    addMessage("system", "Microphone access failed. Check browser permissions.");
+  }
+}
+
+function stopPressToTalk() {
+  if (!isPressToTalkActive) {
+    return;
+  }
+
+  isPressToTalkActive = false;
+  voiceBtn.classList.remove("recording");
+  voiceBtn.textContent = "Hold to Talk";
+  setTurn("Agent speaking", true);
+
+  if (liveSession) {
+    liveSession.sendRealtimeInput({ audioStreamEnd: true });
+  }
+}
+
+function stopMicPipeline() {
+  isPressToTalkActive = false;
+  if (micProcessorNode) {
+    micProcessorNode.disconnect();
+    micProcessorNode.onaudioprocess = null;
+    micProcessorNode = null;
+  }
+  if (micSourceNode) {
+    micSourceNode.disconnect();
+    micSourceNode = null;
+  }
+  if (micStream) {
+    micStream.getTracks().forEach((track) => track.stop());
+    micStream = null;
+  }
+  voiceBtn.classList.remove("recording");
+  voiceBtn.textContent = "Hold to Talk";
+}
+
 async function detectBackendMode() {
   if (window.location.protocol === "file:") {
     return;
   }
 
   try {
-    const response = await fetch("/api/health");
+    const response = await fetch("/api/config");
     if (!response.ok) {
       return;
     }
 
     const data = await response.json();
-    if (!data?.ok) {
+    if (!data?.ok || !data?.config) {
       return;
     }
 
+    appConfig = data.config;
     backendConnected = true;
     connectBtn.disabled = true;
     disconnectBtn.disabled = true;
     apiKeyInput.disabled = true;
+    modelInput.disabled = true;
     apiKeyInput.placeholder = "Managed by Cloud Secret Manager";
+    modelInput.placeholder = appConfig.live.model;
     addMessage("system", "Secure backend detected. Using Cloud Run API proxy mode.");
     updateModeChip();
   } catch {
@@ -113,7 +374,7 @@ async function detectBackendMode() {
 
 function loadSavedConfig() {
   apiKeyInput.value = localStorage.getItem("gemini_api_key") || "";
-  modelInput.value = localStorage.getItem("gemini_model") || DEFAULT_LIVE_MODEL;
+  modelInput.value = localStorage.getItem("gemini_model") || appConfig.live.model;
 }
 
 function saveConfig() {
@@ -169,7 +430,7 @@ function extractTextFromLiveMessage(message) {
 
 async function connectLiveApi() {
   const apiKey = apiKeyInput.value.trim();
-  const model = modelInput.value.trim() || DEFAULT_LIVE_MODEL;
+  const model = getActiveLiveModel();
 
   if (!apiKey) {
     addMessage("system", "Enter a Gemini API key before connecting.");
@@ -186,38 +447,68 @@ async function connectLiveApi() {
       GoogleGenAIRef = mod.GoogleGenAI;
     }
 
-    const ai = new GoogleGenAIRef({ apiKey });
+    const ai = new GoogleGenAIRef({
+      apiKey,
+      ...(appConfig.live.apiVersion ? { apiVersion: appConfig.live.apiVersion } : {})
+    });
     liveSession = await ai.live.connect({
       model,
-      config: {
-        responseModalities: ["AUDIO", "TEXT"]
-      },
+      config: buildLiveConnectConfig(),
       callbacks: {
         onopen: () => {
           liveConnected = true;
           disconnectBtn.disabled = false;
           updateModeChip();
+          updateVoiceButtonState();
           addMessage("system", `Live API connected with model ${model}.`);
         },
         onmessage: (msg) => {
-          const text = extractTextFromLiveMessage(msg);
-          if (!text) {
-            return;
+          const serverContent = msg?.serverContent || {};
+
+          if (serverContent.interrupted) {
+            clearPlaybackQueue();
           }
-          agentSpeaking = false;
-          interruptBtn.disabled = true;
-          setTurn("Patient turn", false);
-          addMessage("agent", text);
+
+          if (serverContent.inputTranscription?.text) {
+            addMessage("patient", serverContent.inputTranscription.text);
+          }
+
+          const audioParts = extractAudioParts(msg);
+          if (audioParts.length > 0) {
+            agentSpeaking = true;
+            setTurn("Agent speaking", true);
+            audioParts.forEach((audioPart) => playAudioPart(audioPart));
+          }
+
+          const text = serverContent.outputTranscription?.text || extractTextFromLiveMessage(msg);
+          if (text) {
+            addMessage("agent", text);
+          }
+
+          if (serverContent.turnComplete || serverContent.generationComplete) {
+            agentSpeaking = false;
+            interruptBtn.disabled = true;
+            setTurn("Patient turn", false);
+          }
         },
         onerror: (err) => {
           addMessage("system", `Live API error: ${err?.message || "Unknown error"}`);
+          agentSpeaking = false;
+          interruptBtn.disabled = true;
+          setTurn("Patient turn", false);
         },
         onclose: () => {
+          agentSpeaking = false;
+          interruptBtn.disabled = true;
           liveConnected = false;
           liveSession = null;
+          stopPressToTalk();
+          stopMicPipeline();
+          clearPlaybackQueue();
           connectBtn.disabled = false;
           disconnectBtn.disabled = true;
           updateModeChip();
+          updateVoiceButtonState();
           addMessage("system", "Live API disconnected.");
         }
       }
@@ -228,6 +519,7 @@ async function connectLiveApi() {
     connectBtn.disabled = false;
     disconnectBtn.disabled = true;
     updateModeChip();
+    updateVoiceButtonState();
     addMessage("system", `Failed to connect: ${err?.message || "Unknown error"}`);
   }
 }
@@ -236,11 +528,15 @@ function disconnectLiveApi() {
   if (liveSession) {
     liveSession.close();
   }
+  stopPressToTalk();
+  stopMicPipeline();
+  clearPlaybackQueue();
   liveConnected = false;
   liveSession = null;
   connectBtn.disabled = false;
   disconnectBtn.disabled = true;
   updateModeChip();
+  updateVoiceButtonState();
 }
 
 function startSession() {
@@ -269,6 +565,7 @@ function startSession() {
   }
 
   markDone(c1);
+  updateVoiceButtonState();
 
   if (!liveConnected) {
     nextAgentTurn();
@@ -331,6 +628,8 @@ function endSession() {
   sessionStatusChip.classList.add("complete");
 
   addMessage("system", "Session ended. Generating structured clinician summary...");
+  stopPressToTalk();
+  updateVoiceButtonState();
   generateSummary();
 }
 
@@ -441,6 +740,20 @@ async function toggleCamera(enabled) {
 }
 
 startBtn.addEventListener("click", startSession);
+voiceBtn.addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  startPressToTalk();
+});
+voiceBtn.addEventListener("pointerup", (e) => {
+  e.preventDefault();
+  stopPressToTalk();
+});
+voiceBtn.addEventListener("pointerleave", () => {
+  stopPressToTalk();
+});
+voiceBtn.addEventListener("touchend", () => {
+  stopPressToTalk();
+});
 interruptBtn.addEventListener("click", interruptAgent);
 endBtn.addEventListener("click", endSession);
 connectBtn.addEventListener("click", connectLiveApi);
@@ -458,6 +771,12 @@ camToggle.addEventListener("change", (e) => {
 setTurn("Ready", false);
 addMessage("system", "Preview UI loaded. Connect Live API or continue in mock mode.");
 sessionStatusChip.classList.add("idle");
-loadSavedConfig();
-updateModeChip();
-detectBackendMode();
+
+async function bootstrap() {
+  await detectBackendMode();
+  loadSavedConfig();
+  updateModeChip();
+  updateVoiceButtonState();
+}
+
+bootstrap();

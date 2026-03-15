@@ -181,6 +181,12 @@ h1 {
   background: linear-gradient(120deg, #d6f3ff 0%, #dffbff 100%);
 }
 
+.btn.recording {
+  color: #fff;
+  background: linear-gradient(125deg, #ef4444, #f97316);
+  box-shadow: 0 10px 22px rgba(239, 68, 68, 0.3);
+}
+
 .btn-danger {
   color: white;
   background: linear-gradient(125deg, #f97373, #ef4444);

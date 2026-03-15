@@ -8,6 +8,64 @@ const port = process.env.PORT || 8080;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const staticDir = path.join(__dirname, "live-session-preview");
+const DEFAULT_CHAT_MODEL = "gemini-2.5-flash";
+const DEFAULT_LIVE_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025";
+
+function envValue(name, fallback = "") {
+  const value = process.env[name];
+  if (typeof value !== "string") {
+    return fallback;
+  }
+
+  const trimmed = value.trim();
+  return trimmed || fallback;
+}
+
+function envBoolean(name, fallback = false) {
+  const value = process.env[name];
+  if (typeof value !== "string" || !value.trim()) {
+    return fallback;
+  }
+
+  return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
+}
+
+function envList(name, fallback = []) {
+  const value = process.env[name];
+  if (typeof value !== "string" || !value.trim()) {
+    return fallback;
+  }
+
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+const runtimeConfig = {
+  chatModel: envValue("GEMINI_MODEL", DEFAULT_CHAT_MODEL),
+  liveModel: envValue("GEMINI_LIVE_MODEL", DEFAULT_LIVE_MODEL),
+  liveApiVersion: envValue("GEMINI_LIVE_API_VERSION", "v1beta"),
+  liveResponseModalities: envList("GEMINI_LIVE_RESPONSE_MODALITIES", ["AUDIO"]),
+  liveInputAudioTranscription: envBoolean("GEMINI_LIVE_INPUT_AUDIO_TRANSCRIPTION", true),
+  liveOutputAudioTranscription: envBoolean("GEMINI_LIVE_OUTPUT_AUDIO_TRANSCRIPTION", true),
+  liveVoiceName: envValue("GEMINI_LIVE_VOICE_NAME", "")
+};
+
+function buildPublicConfig() {
+  return {
+    mode: "cloud-backend",
+    chatModel: runtimeConfig.chatModel,
+    live: {
+      model: runtimeConfig.liveModel,
+      apiVersion: runtimeConfig.liveApiVersion,
+      responseModalities: runtimeConfig.liveResponseModalities,
+      inputAudioTranscription: runtimeConfig.liveInputAudioTranscription,
+      outputAudioTranscription: runtimeConfig.liveOutputAudioTranscription,
+      voiceName: runtimeConfig.liveVoiceName
+    }
+  };
+}
 
 function parseGeminiError(error) {
   const fallback = {
@@ -42,11 +100,81 @@ function parseGeminiError(error) {
   }
 }
 
+async function listGeminiModels(apiKey) {
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`
+  );
+
+  if (!response.ok) {
+    let message = `Gemini model lookup failed with status ${response.status}`;
+    try {
+      const payload = await response.json();
+      message = payload?.error?.message || message;
+    } catch {
+      // Keep fallback message when the upstream API response is not JSON.
+    }
+
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
+  }
+
+  const payload = await response.json();
+  return (payload.models || []).map((model) => String(model.name || "").replace(/^models\//, ""));
+}
+
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(staticDir));
 
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, mode: "cloud-backend" });
+  res.json({
+    ok: true,
+    mode: "cloud-backend",
+    chatModel: runtimeConfig.chatModel,
+    liveModel: runtimeConfig.liveModel,
+    liveApiVersion: runtimeConfig.liveApiVersion
+  });
+});
+
+app.get("/api/config", (_req, res) => {
+  res.json({
+    ok: true,
+    config: buildPublicConfig()
+  });
+});
+
+app.get("/api/live/health", async (_req, res) => {
+  try {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ error: "GEMINI_API_KEY not configured" });
+    }
+
+    const liveModel = runtimeConfig.liveModel;
+    const models = await listGeminiModels(apiKey);
+    const available = models.includes(liveModel);
+
+    if (!available) {
+      return res.status(503).json({
+        ok: false,
+        liveModel,
+        error: "Configured Gemini Live model is not available for the current API key.",
+        availableModels: models.filter((name) => name.includes("audio") || name.includes("live")).slice(0, 20)
+      });
+    }
+
+    return res.json({
+      ok: true,
+      liveModel,
+      available: true
+    });
+  } catch (error) {
+    const status = Number(error?.status) || 500;
+    return res.status(status).json({
+      ok: false,
+      error: error?.message || "Unexpected server error"
+    });
+  }
 });
 
 app.post("/api/chat", async (req, res) => {
@@ -61,7 +189,7 @@ app.post("/api/chat", async (req, res) => {
       return res.status(500).json({ error: "GEMINI_API_KEY not configured" });
     }
 
-    const model = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+    const model = runtimeConfig.chatModel;
     const ai = new GoogleGenAI({ apiKey });
 
     const prompt = [
