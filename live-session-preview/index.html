@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Gemini Physio Intake Copilot - Live Session Preview</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Manrope:wght@400;500;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="bg-orb orb-a" aria-hidden="true"></div>
+    <div class="bg-orb orb-b" aria-hidden="true"></div>
+
+    <header class="topbar">
+      <div class="brand-wrap">
+        <p class="eyebrow">GEMINI LIVE PREVIEW</p>
+        <h1>Physio Intake Copilot</h1>
+      </div>
+      <div class="status-chip idle" id="sessionStatusChip">Session idle</div>
+    </header>
+
+    <main class="layout">
+      <section class="panel panel-session">
+        <div class="panel-head">
+          <h2>Live Session</h2>
+          <p>Single shared UI for patient intake and clinician oversight.</p>
+        </div>
+
+        <div class="control-row">
+          <button id="startBtn" class="btn btn-primary">Start Session</button>
+          <button id="interruptBtn" class="btn btn-secondary" disabled>Interrupt Agent</button>
+          <button id="endBtn" class="btn btn-danger" disabled>End Session</button>
+          <label class="toggle-wrap" for="camToggle">
+            <input type="checkbox" id="camToggle" />
+            <span>Enable camera</span>
+          </label>
+        </div>
+
+        <div class="media-row">
+          <div class="tile mic-tile">
+            <h3>Audio State</h3>
+            <div class="mic-indicator" id="micIndicator">
+              <span class="dot"></span>
+              <span id="micLabel">Ready</span>
+            </div>
+            <p class="small">Low-latency turn-taking is simulated for preview mode.</p>
+          </div>
+
+          <div class="tile camera-tile">
+            <h3>Optional Video</h3>
+            <video id="cameraFeed" autoplay muted playsinline></video>
+            <div class="camera-placeholder" id="cameraPlaceholder">Camera preview is off</div>
+          </div>
+        </div>
+
+        <div class="tile transcript-tile">
+          <div class="transcript-head">
+            <h3>Live Transcript</h3>
+            <span id="turnState" class="turn-state">Waiting</span>
+          </div>
+          <div id="transcript" class="transcript"></div>
+          <form id="patientForm" class="input-row">
+            <input id="patientInput" type="text" placeholder="Type patient response to simulate speech..." autocomplete="off" disabled />
+            <button id="sendPatientBtn" class="btn btn-ghost" type="submit" disabled>Send</button>
+          </form>
+        </div>
+      </section>
+
+      <aside class="panel panel-summary">
+        <div class="panel-head">
+          <h2>Clinician Summary</h2>
+          <p>Structured output appears after session end.</p>
+        </div>
+
+        <div class="summary-card" id="summaryCard">
+          <p class="empty">No summary yet. End the session to generate preview output.</p>
+        </div>
+
+        <div class="checklist">
+          <h3>Preview Checklist</h3>
+          <ul>
+            <li id="c1">Live session started</li>
+            <li id="c2">Patient response captured</li>
+            <li id="c3">Interruption handled</li>
+            <li id="c4">Summary generated</li>
+          </ul>
+        </div>
+      </aside>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

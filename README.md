@@ -12,7 +12,7 @@ We used the Gemini Live API to create a low-latency audio (and optional video) s
 
 The web frontend is based on a Live API starter template and runs on Google Cloud, while a lightweight backend service on Cloud Run stores session transcripts and structured summaries in a database for the clinician to review.
 
-## Prototype Architecture
+## Architecture
 
 This design is optimized for the Gemini Live Agent Challenge in the Live Agents category.
 
@@ -61,56 +61,12 @@ flowchart LR
 6. Backend validates and stores transcript, summary, and metadata.
 7. Clinician reviews a concise standardized intake summary.
 
-### Data Model (Minimum)
-
-#### sessions
-
-- session_id
-- clinician_id
-- patient_id_or_alias
-- started_at
-- ended_at
-- status
-
-#### transcript_chunks
-
-- session_id
-- timestamp
-- speaker
-- text
-- confidence
-
-#### structured_summaries
-
-- session_id
-- body_region
-- symptom_timeline
-- aggravating_factors
-- easing_factors
-- functional_limits
-- red_flags
-- hypothesis
-- recommended_next_steps
-
 ### Safety and Guardrails
 
 - Decision-support only and no autonomous diagnosis claims
 - Explicit red-flag escalation language
 - Concise, confirmatory responses to reduce misunderstanding
 - Prompt boundaries to avoid unsupported medical advice
-
-### Why This Design Scores Well
-
-- Innovation and multimodal UX (40%): live audio-first intake plus optional vision
-- Technical implementation and architecture (30%): Gemini Live + Cloud Run + persistent structured outputs
-- Demo and presentation (30%): clear architecture, reproducible cloud deployment, visible real-time behavior
-
-### Submission Evidence Checklist
-
-- Public repository with setup instructions
-- Architecture diagram image or Mermaid screenshot
-- Short cloud proof clip showing backend running on Google Cloud
-- Demo video under 4 minutes with real interaction (not mockups)
 
 ## Challenges we ran into
 Designing prompts that feel natural for patients but still capture all the clinically relevant intake details was harder than expected.
@@ -127,7 +83,7 @@ We learned how powerful multimodal, always-on agents can be for healthcare workf
 
 We also discovered that small UX details, like when the agent speaks, how it confirms understanding, and how summaries are formatted, matter as much as the underlying model quality.
 
-## What's next for Gemini Physio Intake Copilot
+## What's next
 Next, we want to add basic pose-based movement checks for range of motion, integrate with existing virtual physiotherapy platforms, and let clinicians customize intake templates for different body regions and conditions.
 
 We also plan to run pilot tests with real physiotherapists to validate clinical usefulness, improve safety prompts, and explore expanded use cases like follow-up reviews and home-exercise check-ins.
@@ -135,3 +91,18 @@ We also plan to run pilot tests with real physiotherapists to validate clinical 
 ## Hackathon Assets
 
 - Deployment guide: [deployment/DEPLOYMENT.MD](deployment/DEPLOYMENT.MD)
+
+## Live Session UI Preview
+
+The prototype includes a Gemini-style single-page live session mockup in [live-session-preview/index.html](live-session-preview/index.html).
+
+Quick preview options:
+
+1. Open [live-session-preview/index.html](live-session-preview/index.html) directly in your browser.
+2. Or run a local static server from the repo root:
+
+```bash
+python -m http.server 5500
+```
+
+Then open: `http://localhost:5500/live-session-preview/`

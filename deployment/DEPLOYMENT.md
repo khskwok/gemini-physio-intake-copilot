@@ -15,6 +15,19 @@ To keep the process reliable for both humans and agents:
 - Keep resource names deterministic.
 - Validate each stage before moving to the next stage.
 
+## Project Configuration
+
+Google Cloud project for this prototype:
+
+- PROJECT_ID: physio-intake-copilot
+
+Set it once before running commands:
+
+```bash
+PROJECT_ID="physio-intake-copilot"
+gcloud config set project "$PROJECT_ID"
+```
+
 ## Architecture Summary
 
 - Frontend: Browser app using Gemini Live API (audio plus optional video).
@@ -49,7 +62,7 @@ gcloud services enable \
   cloudbuild.googleapis.com \
   secretmanager.googleapis.com \
   sqladmin.googleapis.com \
-  --project YOUR_PROJECT_ID
+  --project "$PROJECT_ID"
 ```
 
 ## Configuration and Secrets
@@ -67,7 +80,7 @@ Example secret creation:
 ```bash
 echo -n "YOUR_VALUE" | gcloud secrets create GEMINI_API_KEY \
   --data-file=- \
-  --project YOUR_PROJECT_ID
+  --project "$PROJECT_ID"
 ```
 
 If the secret already exists:
@@ -75,7 +88,7 @@ If the secret already exists:
 ```bash
 echo -n "NEW_VALUE" | gcloud secrets versions add GEMINI_API_KEY \
   --data-file=- \
-  --project YOUR_PROJECT_ID
+  --project "$PROJECT_ID"
 ```
 
 ## Backend Deployment (Cloud Run)
@@ -84,21 +97,21 @@ echo -n "NEW_VALUE" | gcloud secrets versions add GEMINI_API_KEY \
 
 ```bash
 gcloud builds submit \
-  --tag REGION-docker.pkg.dev/YOUR_PROJECT_ID/YOUR_REPO/physio-backend:latest \
-  --project YOUR_PROJECT_ID
+  --tag REGION-docker.pkg.dev/$PROJECT_ID/YOUR_REPO/physio-backend:latest \
+  --project "$PROJECT_ID"
 ```
 
 ### 2. Deploy to Cloud Run
 
 ```bash
 gcloud run deploy physio-intake-backend \
-  --image REGION-docker.pkg.dev/YOUR_PROJECT_ID/YOUR_REPO/physio-backend:latest \
+  --image REGION-docker.pkg.dev/$PROJECT_ID/YOUR_REPO/physio-backend:latest \
   --region REGION \
   --platform managed \
   --allow-unauthenticated \
   --set-env-vars NODE_ENV=production \
   --set-secrets GEMINI_API_KEY=GEMINI_API_KEY:latest,DB_CONNECTION_STRING=DB_CONNECTION_STRING:latest \
-  --project YOUR_PROJECT_ID
+  --project "$PROJECT_ID"
 ```
 
 ### 3. Capture Service URL
@@ -107,7 +120,7 @@ gcloud run deploy physio-intake-backend \
 gcloud run services describe physio-intake-backend \
   --region REGION \
   --format='value(status.url)' \
-  --project YOUR_PROJECT_ID
+  --project "$PROJECT_ID"
 ```
 
 ## Frontend Deployment
@@ -249,12 +262,12 @@ Use this section after demos or test deployments to remove resources and avoid u
 ```bash
 gcloud run services delete physio-intake-backend \
   --region REGION \
-  --project YOUR_PROJECT_ID \
+  --project "$PROJECT_ID" \
   --quiet
 
 gcloud run services delete physio-intake-frontend \
   --region REGION \
-  --project YOUR_PROJECT_ID \
+  --project "$PROJECT_ID" \
   --quiet
 ```
 
@@ -263,7 +276,7 @@ gcloud run services delete physio-intake-frontend \
 Delete unneeded images:
 
 ```bash
-gcloud artifacts docker images list REGION-docker.pkg.dev/YOUR_PROJECT_ID/YOUR_REPO --project YOUR_PROJECT_ID
+gcloud artifacts docker images list REGION-docker.pkg.dev/$PROJECT_ID/YOUR_REPO --project "$PROJECT_ID"
 ```
 
 Delete entire repository (only if safe):
@@ -271,16 +284,16 @@ Delete entire repository (only if safe):
 ```bash
 gcloud artifacts repositories delete YOUR_REPO \
   --location REGION \
-  --project YOUR_PROJECT_ID \
+  --project "$PROJECT_ID" \
   --quiet
 ```
 
 ### 3. Delete Secrets Created for the Prototype
 
 ```bash
-gcloud secrets delete GEMINI_API_KEY --project YOUR_PROJECT_ID --quiet
-gcloud secrets delete DB_CONNECTION_STRING --project YOUR_PROJECT_ID --quiet
-gcloud secrets delete SESSION_SIGNING_KEY --project YOUR_PROJECT_ID --quiet
+gcloud secrets delete GEMINI_API_KEY --project "$PROJECT_ID" --quiet
+gcloud secrets delete DB_CONNECTION_STRING --project "$PROJECT_ID" --quiet
+gcloud secrets delete SESSION_SIGNING_KEY --project "$PROJECT_ID" --quiet
 ```
 
 ### 4. Remove Database Resources (If Dedicated to Prototype)
@@ -289,7 +302,7 @@ If using Cloud SQL and this instance is only for the prototype:
 
 ```bash
 gcloud sql instances delete YOUR_SQL_INSTANCE \
-  --project YOUR_PROJECT_ID \
+  --project "$PROJECT_ID" \
   --quiet
 ```
 
@@ -298,18 +311,18 @@ gcloud sql instances delete YOUR_SQL_INSTANCE \
 Disable services only if the project is not actively used by other apps:
 
 ```bash
-gcloud services disable run.googleapis.com --project YOUR_PROJECT_ID
-gcloud services disable artifactregistry.googleapis.com --project YOUR_PROJECT_ID
-gcloud services disable cloudbuild.googleapis.com --project YOUR_PROJECT_ID
-gcloud services disable secretmanager.googleapis.com --project YOUR_PROJECT_ID
+gcloud services disable run.googleapis.com --project "$PROJECT_ID"
+gcloud services disable artifactregistry.googleapis.com --project "$PROJECT_ID"
+gcloud services disable cloudbuild.googleapis.com --project "$PROJECT_ID"
+gcloud services disable secretmanager.googleapis.com --project "$PROJECT_ID"
 ```
 
 ### 6. Verify Cleanup
 
 ```bash
-gcloud run services list --region REGION --project YOUR_PROJECT_ID
-gcloud artifacts repositories list --location REGION --project YOUR_PROJECT_ID
-gcloud secrets list --project YOUR_PROJECT_ID
+gcloud run services list --region REGION --project "$PROJECT_ID"
+gcloud artifacts repositories list --location REGION --project "$PROJECT_ID"
+gcloud secrets list --project "$PROJECT_ID"
 ```
 
 Expected result: no prototype-specific services, repositories, or secrets remain.
