@@ -28,6 +28,28 @@
           <p>Single shared UI for patient intake and clinician oversight.</p>
         </div>
 
+        <div class="tile config-tile">
+          <div class="config-head">
+            <h3>Gemini Live Connection</h3>
+            <span id="modeChip" class="mode-chip">Mock mode</span>
+          </div>
+          <div class="config-grid">
+            <label>
+              API Key
+              <input id="apiKeyInput" type="password" placeholder="AIza..." autocomplete="off" />
+            </label>
+            <label>
+              Model
+              <input id="modelInput" type="text" value="gemini-live-2.5-flash-preview" />
+            </label>
+          </div>
+          <div class="config-actions">
+            <button id="connectBtn" class="btn btn-primary" type="button">Connect Live API</button>
+            <button id="disconnectBtn" class="btn btn-secondary" type="button" disabled>Disconnect</button>
+          </div>
+          <p class="small">For local preview only. Use a restricted key and do not commit secrets.</p>
+        </div>
+
         <div class="control-row">
           <button id="startBtn" class="btn btn-primary">Start Session</button>
           <button id="interruptBtn" class="btn btn-secondary" disabled>Interrupt Agent</button>

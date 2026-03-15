@@ -224,6 +224,63 @@ h1 {
   box-shadow: 0 8px 22px rgba(23, 67, 124, 0.08);
 }
 
+.config-tile {
+  margin-top: 14px;
+}
+
+.config-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.mode-chip {
+  border: 1px solid #c9dff9;
+  background: #eef6ff;
+  color: #2560a2;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.mode-chip.live {
+  border-color: #9be5d3;
+  background: #ebfff8;
+  color: #0d7f5c;
+}
+
+.config-grid {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  gap: 10px;
+}
+
+.config-grid label {
+  display: grid;
+  gap: 6px;
+  color: #496180;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.config-grid input {
+  border-radius: 10px;
+  border: 1px solid #c7d8ee;
+  padding: 10px 12px;
+  font-size: 14px;
+  background: #fbfdff;
+}
+
+.config-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .small {
   color: var(--muted);
   margin-bottom: 0;
@@ -424,6 +481,10 @@ h1 {
   }
 
   .media-row {
+    grid-template-columns: 1fr;
+  }
+
+  .config-grid {
     grid-template-columns: 1fr;
   }
 }

@@ -38,10 +38,46 @@ gcloud config set project "$PROJECT_ID"
 ## Prerequisites
 
 - Google Cloud project with billing enabled.
-- gcloud CLI installed and authenticated.
+- Google Cloud CLI (gcloud) installed and authenticated.
 - Docker installed for container builds (or use Cloud Build only).
 - Gemini API access configured.
 - IAM permissions for Cloud Run, Artifact Registry, Secret Manager, and database services.
+
+### Install Google Cloud CLI
+
+If gcloud is not installed, install it first.
+
+Windows (PowerShell with winget):
+
+```bash
+winget install --id Google.CloudSDK --exact --accept-package-agreements --accept-source-agreements
+```
+
+macOS (Homebrew):
+
+```bash
+brew install --cask google-cloud-sdk
+```
+
+Linux (Debian/Ubuntu):
+
+```bash
+curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | sudo tee /etc/apt/sources.list.d/google-cloud-sdk.list
+sudo apt-get update && sudo apt-get install google-cloud-cli
+```
+
+Verify installation:
+
+```bash
+gcloud --version
+```
+
+Authenticate:
+
+```bash
+gcloud auth login
+```
 
 ## Required Services
 
