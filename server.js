@@ -42,15 +42,59 @@ function envList(name, fallback = []) {
     .filter(Boolean);
 }
 
+function envNumber(name, fallback) {
+  const value = process.env[name];
+  if (typeof value !== "string" || !value.trim()) {
+    return fallback;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function toIsoTime(offsetMs) {
+  return new Date(Date.now() + offsetMs).toISOString();
+}
+
 const runtimeConfig = {
   chatModel: envValue("GEMINI_MODEL", DEFAULT_CHAT_MODEL),
   liveModel: envValue("GEMINI_LIVE_MODEL", DEFAULT_LIVE_MODEL),
-  liveApiVersion: envValue("GEMINI_LIVE_API_VERSION", "v1beta"),
+  liveApiVersion: envValue("GEMINI_LIVE_API_VERSION", "v1alpha"),
   liveResponseModalities: envList("GEMINI_LIVE_RESPONSE_MODALITIES", ["AUDIO"]),
   liveInputAudioTranscription: envBoolean("GEMINI_LIVE_INPUT_AUDIO_TRANSCRIPTION", true),
   liveOutputAudioTranscription: envBoolean("GEMINI_LIVE_OUTPUT_AUDIO_TRANSCRIPTION", true),
-  liveVoiceName: envValue("GEMINI_LIVE_VOICE_NAME", "")
+  liveVoiceName: envValue("GEMINI_LIVE_VOICE_NAME", ""),
+  liveEphemeralEnabled: envBoolean("GEMINI_LIVE_EPHEMERAL_ENABLED", true),
+  liveEphemeralUses: envNumber("GEMINI_LIVE_EPHEMERAL_USES", 1),
+  liveEphemeralExpireMinutes: envNumber("GEMINI_LIVE_EPHEMERAL_EXPIRE_MINUTES", 30),
+  liveEphemeralNewSessionExpireSeconds: envNumber("GEMINI_LIVE_EPHEMERAL_NEW_SESSION_EXPIRE_SECONDS", 60)
 };
+
+function buildLiveConnectConfig() {
+  const config = {
+    responseModalities: runtimeConfig.liveResponseModalities
+  };
+
+  if (runtimeConfig.liveInputAudioTranscription) {
+    config.inputAudioTranscription = {};
+  }
+
+  if (runtimeConfig.liveOutputAudioTranscription) {
+    config.outputAudioTranscription = {};
+  }
+
+  if (runtimeConfig.liveVoiceName) {
+    config.speechConfig = {
+      voiceConfig: {
+        prebuiltVoiceConfig: {
+          voiceName: runtimeConfig.liveVoiceName
+        }
+      }
+    };
+  }
+
+  return config;
+}
 
 function buildPublicConfig() {
   return {
@@ -62,7 +106,8 @@ function buildPublicConfig() {
       responseModalities: runtimeConfig.liveResponseModalities,
       inputAudioTranscription: runtimeConfig.liveInputAudioTranscription,
       outputAudioTranscription: runtimeConfig.liveOutputAudioTranscription,
-      voiceName: runtimeConfig.liveVoiceName
+      voiceName: runtimeConfig.liveVoiceName,
+      ephemeralEnabled: runtimeConfig.liveEphemeralEnabled
     }
   };
 }
@@ -173,6 +218,54 @@ app.get("/api/live/health", async (_req, res) => {
     return res.status(status).json({
       ok: false,
       error: error?.message || "Unexpected server error"
+    });
+  }
+});
+
+app.post("/api/live/token", async (_req, res) => {
+  try {
+    if (!runtimeConfig.liveEphemeralEnabled) {
+      return res.status(403).json({ error: "Ephemeral Live tokens are disabled" });
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ error: "GEMINI_API_KEY not configured" });
+    }
+
+    const ai = new GoogleGenAI({
+      apiKey,
+      httpOptions: { apiVersion: "v1alpha" }
+    });
+
+    const expireTime = toIsoTime(runtimeConfig.liveEphemeralExpireMinutes * 60 * 1000);
+    const newSessionExpireTime = toIsoTime(runtimeConfig.liveEphemeralNewSessionExpireSeconds * 1000);
+    const token = await ai.authTokens.create({
+      config: {
+        uses: runtimeConfig.liveEphemeralUses,
+        expireTime,
+        newSessionExpireTime,
+        liveConnectConstraints: {
+          model: runtimeConfig.liveModel,
+          config: buildLiveConnectConfig()
+        },
+        lockAdditionalFields: []
+      }
+    });
+
+    return res.json({
+      ok: true,
+      token: token.name,
+      model: runtimeConfig.liveModel,
+      apiVersion: "v1alpha",
+      expireTime,
+      newSessionExpireTime
+    });
+  } catch (error) {
+    const normalized = parseGeminiError(error);
+    return res.status(normalized.status).json({
+      error: normalized.message,
+      details: normalized.details
     });
   }
 });

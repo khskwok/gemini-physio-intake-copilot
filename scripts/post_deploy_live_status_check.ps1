@@ -189,6 +189,36 @@ else {
   }
 }
 
+Write-Info "Checking /api/live/token ..."
+$liveToken = Invoke-JsonPost -Uri "$serviceUrl/api/live/token" -Body @{}
+if ($liveToken.StatusCode -ne 200) {
+  Write-Fail "/api/live/token failed with status $($liveToken.StatusCode)"
+  Write-Host $liveToken.Content
+  $hadFailure = $true
+}
+else {
+  $tokenPayload = $null
+  try {
+    $tokenPayload = $liveToken.Content | ConvertFrom-Json
+  }
+  catch {
+    Write-Fail "/api/live/token returned 200 but non-JSON body."
+    Write-Host $liveToken.Content
+    $hadFailure = $true
+  }
+
+  if ($tokenPayload) {
+    if (-not $tokenPayload.ok -or -not $tokenPayload.token) {
+      Write-Fail "/api/live/token returned 200 but missing token payload."
+      Write-Host $liveToken.Content
+      $hadFailure = $true
+    }
+    else {
+      Write-Ok "Ephemeral Gemini Live token endpoint is healthy."
+    }
+  }
+}
+
 Write-Info "Checking Gemini response path via /api/chat..."
 $chat = Invoke-JsonPost -Uri "$serviceUrl/api/chat" -Body @{ text = $ProbeText }
 

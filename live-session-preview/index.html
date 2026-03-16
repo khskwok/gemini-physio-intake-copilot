@@ -28,7 +28,7 @@
           <p>Single shared UI for patient intake and clinician oversight.</p>
         </div>
 
-        <div class="tile config-tile" hidden>
+        <div id="configTile" class="tile config-tile" hidden>
           <div class="config-head">
             <h3>Gemini Live Connection</h3>
             <span id="modeChip" class="mode-chip">Mock mode</span>
@@ -52,8 +52,6 @@
 
         <div class="control-row">
           <button id="startBtn" class="btn btn-primary">Start Session</button>
-          <button id="voiceBtn" class="btn btn-secondary" disabled>Hold to Talk</button>
-          <button id="interruptBtn" class="btn btn-secondary" disabled>Interrupt Agent</button>
           <button id="endBtn" class="btn btn-danger" disabled>End Session</button>
           <label class="toggle-wrap" for="camToggle">
             <input type="checkbox" id="camToggle" />
@@ -80,13 +78,23 @@
 
         <div class="tile transcript-tile">
           <div class="transcript-head">
-            <h3>Live Transcript</h3>
+            <div class="transcript-title">
+              <h3>Live Transcript</h3>
+              <p class="transcript-subtitle">Use text or push-to-talk input while the stream is active.</p>
+            </div>
             <span id="turnState" class="turn-state">Waiting</span>
           </div>
           <div id="transcript" class="transcript"></div>
-          <form id="patientForm" class="input-row">
-            <input id="patientInput" type="text" placeholder="Type patient response to simulate speech..." autocomplete="off" disabled />
-            <button id="sendPatientBtn" class="btn btn-ghost" type="submit" disabled>Send</button>
+          <form id="patientForm" class="composer-card">
+            <textarea id="patientInput" rows="3" placeholder="Start typing a prompt or hold to talk" autocomplete="off" disabled></textarea>
+            <div class="composer-footer">
+              <p id="composerHelp" class="composer-help">Press and hold Hold to Talk to stream your voice. Release to stop sending audio.</p>
+              <div class="composer-actions">
+                <button id="sendPatientBtn" class="btn btn-ghost" type="submit" disabled>Send</button>
+                <button id="voiceBtn" class="btn btn-secondary" type="button" disabled>Hold to Talk</button>
+                <button id="interruptBtn" class="btn btn-secondary" type="button" disabled>Interrupt Agent</button>
+              </div>
+            </div>
           </form>
         </div>
       </section>

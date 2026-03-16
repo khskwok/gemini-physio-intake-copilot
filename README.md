@@ -5,12 +5,17 @@ We were inspired by research on AI-driven virtual rehab assistants and by the Ge
 
 ## What it does
 Gemini Physio Intake Copilot is a live voice agent that joins a virtual physio session to guide the intake conversation with the patient.
-It asks structured questions about pain history and function, listens to the patient's answers, optionally observes simple movements over video, and generates a concise, standardized intake summary and hypothesis for the physiotherapist.
+It asks structured questions about pain history and function, listens to the patient's answers, optionally observes simple movements over video, and generates a concise, standardized intake summary for the physiotherapist.
 
 ## How we built it
-We used the Gemini Live API to create a low-latency audio (and optional video) stream between the browser and a Gemini model, powered by the Google GenAI SDK.
+We used the Gemini Live API and the Google GenAI SDK to create a low-latency audio interaction loop between the browser and Gemini.
 
-The web frontend is based on a Live API starter template and runs on Google Cloud, while a lightweight backend service on Cloud Run stores session transcripts and structured summaries in a database for the clinician to review.
+The current prototype is a single Cloud Run service that:
+
+- Serves the web UI
+- Proxies text chat requests through a backend API
+- Publishes runtime config to the browser
+- Mints short-lived Gemini Live ephemeral tokens so the browser can open a secure Live session without a long-lived API key in the client
 
 ## Architecture
 
@@ -28,38 +33,33 @@ Build a live, multimodal physiotherapy intake copilot that can:
 ### High-Level Components
 
 - Web frontend for patient and clinician session UI
-- Gemini Live API session layer for real-time multimodal interaction
-- Cloud Run backend for intake orchestration, session state, and safety logic
-- Database layer for transcripts, summaries, and session metadata
-- Observability layer for logging and monitoring
+- Gemini Live API session layer for real-time voice interaction
+- Cloud Run backend for secure token issuance, runtime config, and text fallback/chat endpoints
+- Observability layer for deployment checks and runtime health validation
 
 ### Architecture Diagram
 
 ```mermaid
 flowchart LR
-	U[Patient + Physiotherapist in Browser] -->|Audio stream + optional video| FE[Web Frontend\nLive Session UI]
-	FE -->|WebSocket/Live stream| GL[Gemini Live API\nGoogle GenAI SDK]
-	GL -->|Agent responses (voice + text)| FE
-
-	FE -->|Session events + partial transcript| BE[Cloud Run Backend\nIntake Orchestrator]
-	GL -->|Structured extraction request\nend-of-session summary| BE
-
-	BE -->|Store transcript + summary| DB[(Database)]
-	BE -->|Write logs/metrics| OBS[Cloud Logging + Monitoring]
-
-	C[Clinician Review View] -->|Fetch structured summary| BE
-	BE --> DB
+	U[Patient + Clinician in Browser] --> FE[Web Frontend\nComposer + Transcript + Voice Controls]
+	FE -->|GET /api/config| BE[Cloud Run Backend]
+	FE -->|POST /api/live/token| BE
+	BE -->|Mint ephemeral token| GL[Gemini API]
+	FE -->|Live WebSocket with ephemeral token| GL
+	FE -->|POST /api/chat| BE
+	BE -->|generateContent text fallback| GL
+	GL -->|Audio + transcript + text| FE
+	BE --> OBS[Health checks + deployment validation]
 ```
 
 ### Runtime Flow
 
-1. Clinician starts a session in the web app.
-2. Frontend opens a live channel and streams audio, with optional video, to Gemini Live.
-3. Agent asks guided intake questions with interruption-aware turn handling.
-4. Optional movement checks can be prompted and interpreted from video context.
-5. At session end, backend triggers structured summarization and red-flag extraction.
-6. Backend validates and stores transcript, summary, and metadata.
-7. Clinician reviews a concise standardized intake summary.
+1. Browser loads runtime config from the Cloud Run backend.
+2. On deployed environments, the frontend requests a short-lived Gemini Live ephemeral token from `/api/live/token`.
+3. Browser opens a Gemini Live session with that token and streams push-to-talk audio.
+4. Gemini returns audio and transcription updates to the UI.
+5. If Live is unavailable, the backend text endpoint can still handle typed intake turns.
+6. At session end, the UI generates a structured clinician-facing summary for review.
 
 ### Safety and Guardrails
 
@@ -76,7 +76,7 @@ We also had to tune the live interaction so that the agent feels interruptible a
 ## Accomplishments that we're proud of
 We created an MVP where a physiotherapist can invite the agent into a call, let it run most of the intake, and receive a clear, structured summary within seconds of ending the conversation.
 
-The agent already highlights potential red flags and suggests next-step assessment ideas, turning a free-form chat into a clinically useful starting point without replacing professional judgment.
+The agent already highlights potential red flags and suggests next-step assessment ideas, turning a free-form chat into a clinically useful starting point without replacing professional judgment. The deployed prototype now also uses short-lived Gemini Live ephemeral tokens, which lets the browser establish a secure Live session without exposing a long-lived API key client-side.
 
 ## What we learned
 We learned how powerful multimodal, always-on agents can be for healthcare workflows when they are carefully scoped as decision support rather than automated diagnosis.
@@ -84,9 +84,9 @@ We learned how powerful multimodal, always-on agents can be for healthcare workf
 We also discovered that small UX details, like when the agent speaks, how it confirms understanding, and how summaries are formatted, matter as much as the underlying model quality.
 
 ## What's next
-Next, we want to add basic pose-based movement checks for range of motion, integrate with existing virtual physiotherapy platforms, and let clinicians customize intake templates for different body regions and conditions.
+Next, we want to add real-time video frame streaming for simple movement checks, integrate session persistence for transcripts and summaries, and let clinicians customize intake templates for different body regions and conditions.
 
-We also plan to run pilot tests with real physiotherapists to validate clinical usefulness, improve safety prompts, and explore expanded use cases like follow-up reviews and home-exercise check-ins.
+We also plan to improve session-state UX around secure Live connection startup, run pilot tests with physiotherapists, and validate how useful the summary output is in real workflows.
 
 ## Hackathon Assets
 
@@ -107,16 +107,4 @@ python -m http.server 5500
 
 Then open: `http://localhost:5500/live-session-preview/`
 
-### Enable Gemini Live API Session (Test)
-
-1. Open the preview page and enter your Gemini API key in the Gemini Live Connection card.
-2. Keep or update the model (default: `gemini-live-2.5-flash-preview`).
-3. Click Connect Live API and confirm the mode changes to "Live API connected".
-4. Click Start Session, type a patient response, and click Send.
-5. Verify agent replies appear in transcript from Live API.
-
-Notes:
-
-- Use a restricted API key for local testing only.
-- Do not commit API keys to source control.
-- If connection fails, stay in mock mode and validate network/key restrictions.
+For current deployment details and Gemini Live test instructions, see [deployment/DEPLOYMENT.MD](deployment/DEPLOYMENT.MD).

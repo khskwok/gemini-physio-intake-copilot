@@ -36,10 +36,10 @@ gcloud config set project "$PROJECT_ID"
 
 ## Architecture Summary
 
-- Frontend: Browser app using Gemini Live API (audio plus optional video).
+- Frontend: Browser app with transcript, push-to-talk audio, optional video preview, and clinician summary UI.
 - Backend: Lightweight API service deployed to Google Cloud Run.
-- Data: Database for transcripts, structured summaries, and session metadata.
-- Optional: Secret Manager for API keys and runtime secrets.
+- Live auth: Backend-minted Gemini Live ephemeral tokens for secure browser Live sessions.
+- Secret management: Secret Manager for the long-lived Gemini API key.
 
 ## Prerequisites
 
@@ -143,6 +143,14 @@ This repository now includes a Cloud Run server (`server.js`) that:
 - Exposes `/api/config` so the frontend can load runtime configuration instead of hardcoding models
 - Exposes `/api/live/health` so deployments can verify Gemini Live model readiness
 
+Current deployed interaction model:
+
+- Cloud Run serves the UI and runtime config.
+- Browser requests `/api/live/token` when starting a session.
+- Backend mints a constrained short-lived Gemini Live token using the server-side API key.
+- Browser uses that token directly with Gemini Live WebSocket.
+- `/api/chat` remains available as a typed fallback path.
+
 Runtime parameters are environment-driven. The app reads these variables at startup:
 
 - `GEMINI_MODEL` for server-side text chat
@@ -152,6 +160,10 @@ Runtime parameters are environment-driven. The app reads these variables at star
 - `GEMINI_LIVE_INPUT_AUDIO_TRANSCRIPTION` as `true` or `false`
 - `GEMINI_LIVE_OUTPUT_AUDIO_TRANSCRIPTION` as `true` or `false`
 - `GEMINI_LIVE_VOICE_NAME` for an optional prebuilt voice
+- `GEMINI_LIVE_EPHEMERAL_ENABLED` as `true` or `false`
+- `GEMINI_LIVE_EPHEMERAL_USES` for how many sessions a token can start
+- `GEMINI_LIVE_EPHEMERAL_EXPIRE_MINUTES` for Live session lifetime
+- `GEMINI_LIVE_EPHEMERAL_NEW_SESSION_EXPIRE_SECONDS` for how long a token can start a new session
 
 Set deployment variables:
 
@@ -202,7 +214,7 @@ gcloud run deploy "$SERVICE" \
   --region "$REGION" \
   --platform managed \
   --allow-unauthenticated \
-  --set-env-vars GEMINI_MODEL=gemini-2.5-flash,GEMINI_LIVE_MODEL=gemini-2.5-flash-native-audio-preview-12-2025,GEMINI_LIVE_API_VERSION=v1beta,GEMINI_LIVE_RESPONSE_MODALITIES=AUDIO,GEMINI_LIVE_INPUT_AUDIO_TRANSCRIPTION=true,GEMINI_LIVE_OUTPUT_AUDIO_TRANSCRIPTION=true \
+  --set-env-vars GEMINI_MODEL=gemini-2.5-flash,GEMINI_LIVE_MODEL=gemini-2.5-flash-native-audio-preview-12-2025,GEMINI_LIVE_API_VERSION=v1alpha,GEMINI_LIVE_RESPONSE_MODALITIES=AUDIO,GEMINI_LIVE_INPUT_AUDIO_TRANSCRIPTION=true,GEMINI_LIVE_OUTPUT_AUDIO_TRANSCRIPTION=true,GEMINI_LIVE_EPHEMERAL_ENABLED=true,GEMINI_LIVE_EPHEMERAL_USES=1,GEMINI_LIVE_EPHEMERAL_EXPIRE_MINUTES=30,GEMINI_LIVE_EPHEMERAL_NEW_SESSION_EXPIRE_SECONDS=60 \
   --set-secrets GEMINI_API_KEY=GEMINI_API_KEY:latest \
   --project "$PROJECT_ID"
 ```
@@ -229,6 +241,11 @@ curl "$SERVICE_URL/api/config"
 
 # Gemini Live readiness
 curl "$SERVICE_URL/api/live/health"
+
+# Gemini Live ephemeral token
+curl -X POST "$SERVICE_URL/api/live/token" \
+  -H "Content-Type: application/json" \
+  -d '{}'
 
 # Chat
 curl -X POST "$SERVICE_URL/api/chat" \
@@ -259,8 +276,51 @@ The script checks:
 - `/styles.css` and `/app.js` return the latest deployed assets
 - `/api/health` status and configured models
 - `/api/live/health` readiness for the configured Gemini Live model
+- `/api/live/token` can mint an ephemeral Live token for browser bootstrap
 - `/api/chat` response with a probe prompt
 - Error classification hints for 429 quota and 400/401/403 auth or model issues
+
+## Current Deployment
+
+The current prototype is deployed on Google Cloud Run and verified with the post-deploy health check script.
+
+- Project: `physio-intake-copilot`
+- Region: `us-central1`
+- Service URL: `https://physio-intake-copilot-215911808617.us-central1.run.app`
+
+Verified endpoints:
+
+- `/`
+- `/api/health`
+- `/api/config`
+- `/api/live/health`
+- `/api/live/token`
+- `/api/chat`
+
+## Enable Gemini Live API Session (Test)
+
+### Local Preview Mode
+
+1. Open the preview page and enter your Gemini API key in the Gemini Live Connection card.
+2. Keep or update the model. The default local Live model is `gemini-2.5-flash-native-audio-preview-12-2025`.
+3. Click `Connect Live API` and confirm the mode changes to `Live API connected`.
+4. Click `Start Session`.
+5. Press and hold `Hold to Talk` to stream microphone audio, then release to stop sending audio.
+
+### Deployed Cloud Run Mode
+
+1. Open the deployed site.
+2. Click `Start Session`.
+3. The browser requests a short-lived token from `/api/live/token` and attempts a secure Gemini Live connection automatically.
+4. Once connected, `Hold to Talk` becomes active.
+5. Press and hold `Hold to Talk` to stream microphone audio, then release to stop sending audio.
+
+Notes:
+
+- Use a restricted API key for local testing only.
+- Do not commit API keys to source control.
+- The deployed app uses ephemeral tokens instead of exposing a long-lived API key in the browser.
+- If Live connection fails, typed turns can still be tested through the backend text path.
 
 ## Troubleshooting
 

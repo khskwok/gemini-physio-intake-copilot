@@ -19,6 +19,8 @@ const modelInput = document.getElementById("modelInput");
 const connectBtn = document.getElementById("connectBtn");
 const disconnectBtn = document.getElementById("disconnectBtn");
 const modeChip = document.getElementById("modeChip");
+const configTile = document.getElementById("configTile");
+const composerHelp = document.getElementById("composerHelp");
 
 const c1 = document.getElementById("c1");
 const c2 = document.getElementById("c2");
@@ -50,6 +52,7 @@ let micStream = null;
 let micSourceNode = null;
 let micProcessorNode = null;
 let isPressToTalkActive = false;
+let liveBootstrapPending = false;
 let playbackChain = Promise.resolve();
 let playbackGeneration = 0;
 
@@ -254,8 +257,28 @@ function extractAudioParts(message) {
 }
 
 function updateVoiceButtonState() {
-  const enabled = sessionActive && liveConnected;
+  const enabled = sessionActive && liveConnected && !liveBootstrapPending;
   voiceBtn.disabled = !enabled;
+  if (!sessionActive) {
+    voiceBtn.title = "Start a session first.";
+    composerHelp.textContent = "Start a session to enable text input. Voice becomes available after a Gemini Live connection is active.";
+  } else if (liveBootstrapPending) {
+    voiceBtn.title = "Secure Gemini Live session is starting.";
+    composerHelp.textContent = "Starting a secure Gemini Live session. Hold to Talk will enable automatically once connected.";
+  } else if (!liveConnected) {
+    voiceBtn.title = "Voice streaming requires an active Gemini Live connection.";
+    composerHelp.textContent = backendConnected
+      ? "This deployment can start a secure Gemini Live session automatically. If Hold to Talk is still disabled, Live bootstrap has not connected yet."
+      : "Connect Gemini Live first, then press and hold Hold to Talk to stream your voice.";
+  } else {
+    voiceBtn.title = "Press and hold to stream voice. Release to stop.";
+    composerHelp.textContent = "Press and hold Hold to Talk to stream your voice. Release to stop sending audio.";
+  }
+
+  interruptBtn.title = agentSpeaking
+    ? "Stop the current Gemini response and hand the turn back to the patient."
+    : "Interrupt becomes available while the agent is speaking.";
+
   if (!enabled) {
     voiceBtn.classList.remove("recording");
     voiceBtn.textContent = "Hold to Talk";
@@ -343,6 +366,7 @@ function stopMicPipeline() {
 
 async function detectBackendMode() {
   if (window.location.protocol === "file:") {
+    configTile.hidden = false;
     return;
   }
 
@@ -359,6 +383,7 @@ async function detectBackendMode() {
 
     appConfig = data.config;
     backendConnected = true;
+    configTile.hidden = true;
     connectBtn.disabled = true;
     disconnectBtn.disabled = true;
     apiKeyInput.disabled = true;
@@ -368,7 +393,8 @@ async function detectBackendMode() {
     addMessage("system", "Secure backend detected. Using Cloud Run API proxy mode.");
     updateModeChip();
   } catch {
-    // Keep local modes available.
+    configTile.hidden = false;
+    addMessage("system", "Cloud backend not detected. Local Gemini Live connect is available.");
   }
 }
 
@@ -428,18 +454,33 @@ function extractTextFromLiveMessage(message) {
     .trim();
 }
 
-async function connectLiveApi() {
-  const apiKey = apiKeyInput.value.trim();
-  const model = getActiveLiveModel();
+async function connectLiveApi(options = {}) {
+  const apiKey = options.apiKey || apiKeyInput.value.trim();
+  const model = options.model || getActiveLiveModel();
+  const apiVersion = options.apiVersion || appConfig.live.apiVersion;
+  const connectionLabel = options.connectionLabel || "Gemini Live API";
+  let settled = false;
+
+  let resolveConnection;
+  const connectionPromise = new Promise((resolve) => {
+    resolveConnection = resolve;
+  });
+
+  const settleConnection = (value) => {
+    if (!settled) {
+      settled = true;
+      resolveConnection(value);
+    }
+  };
 
   if (!apiKey) {
     addMessage("system", "Enter a Gemini API key before connecting.");
-    return;
+    return false;
   }
 
   connectBtn.disabled = true;
   saveConfig();
-  addMessage("system", "Connecting to Gemini Live API...");
+  addMessage("system", `Connecting to ${connectionLabel}...`);
 
   try {
     if (!GoogleGenAIRef) {
@@ -449,7 +490,7 @@ async function connectLiveApi() {
 
     const ai = new GoogleGenAIRef({
       apiKey,
-      ...(appConfig.live.apiVersion ? { apiVersion: appConfig.live.apiVersion } : {})
+      ...(apiVersion ? { httpOptions: { apiVersion } } : {})
     });
     liveSession = await ai.live.connect({
       model,
@@ -460,7 +501,8 @@ async function connectLiveApi() {
           disconnectBtn.disabled = false;
           updateModeChip();
           updateVoiceButtonState();
-          addMessage("system", `Live API connected with model ${model}.`);
+          addMessage("system", `${connectionLabel} connected with model ${model}.`);
+          settleConnection(true);
         },
         onmessage: (msg) => {
           const serverContent = msg?.serverContent || {};
@@ -496,6 +538,9 @@ async function connectLiveApi() {
           agentSpeaking = false;
           interruptBtn.disabled = true;
           setTurn("Patient turn", false);
+          if (!liveConnected) {
+            settleConnection(false);
+          }
         },
         onclose: () => {
           agentSpeaking = false;
@@ -510,9 +555,12 @@ async function connectLiveApi() {
           updateModeChip();
           updateVoiceButtonState();
           addMessage("system", "Live API disconnected.");
+          settleConnection(false);
         }
       }
     });
+
+    return await connectionPromise;
   } catch (err) {
     liveConnected = false;
     liveSession = null;
@@ -521,6 +569,49 @@ async function connectLiveApi() {
     updateModeChip();
     updateVoiceButtonState();
     addMessage("system", `Failed to connect: ${err?.message || "Unknown error"}`);
+    settleConnection(false);
+    return false;
+  }
+}
+
+async function requestEphemeralLiveToken() {
+  const response = await fetch("/api/live/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({})
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload?.token) {
+    throw new Error(payload?.error || `HTTP ${response.status}`);
+  }
+
+  return payload;
+}
+
+async function bootstrapBackendLiveSession() {
+  if (!backendConnected || liveConnected || !appConfig.live?.ephemeralEnabled) {
+    return liveConnected;
+  }
+
+  liveBootstrapPending = true;
+  updateVoiceButtonState();
+
+  try {
+    addMessage("system", "Starting secure Gemini Live session...");
+    const tokenPayload = await requestEphemeralLiveToken();
+    return await connectLiveApi({
+      apiKey: tokenPayload.token,
+      model: tokenPayload.model || appConfig.live.model,
+      apiVersion: tokenPayload.apiVersion || "v1alpha",
+      connectionLabel: "secure Gemini Live session"
+    });
+  } catch (err) {
+    addMessage("system", `Secure Live bootstrap failed: ${err?.message || "Unknown error"}`);
+    return false;
+  } finally {
+    liveBootstrapPending = false;
+    updateVoiceButtonState();
   }
 }
 
@@ -539,7 +630,7 @@ function disconnectLiveApi() {
   updateVoiceButtonState();
 }
 
-function startSession() {
+async function startSession() {
   sessionActive = true;
   turnIndex = 0;
   patientReplies.length = 0;
@@ -555,6 +646,10 @@ function startSession() {
   sessionStatusChip.textContent = "Session live";
   sessionStatusChip.classList.remove("idle", "complete");
   sessionStatusChip.classList.add("live");
+
+  if (backendConnected && !liveConnected && appConfig.live?.ephemeralEnabled) {
+    await bootstrapBackendLiveSession();
+  }
 
   if (liveConnected) {
     addMessage("system", "Session started with Gemini Live API.");
