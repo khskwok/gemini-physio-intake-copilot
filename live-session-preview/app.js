@@ -60,12 +60,12 @@ const transcriptEntries = [];
 const PHYSIO_INTAKE_SYSTEM_INSTRUCTION = [
   "Role: physiotherapy intake assistant.",
   "Goal: triage and guide a structured intake conversation, ask focused follow-up questions, and prepare a concise standardized summary for the physiotherapist.",
-  "Scope: gather pain history, functional limits, symptom behavior, easing and aggravating factors, relevant history, and red flags; optionally guide simple low-risk movement checks if video is enabled.",
+  "Scope: gather the patient's main concern or reason for visit, pain history, functional limits, symptom behavior, easing and aggravating factors, relevant history, and red flags; optionally guide simple low-risk movement checks if video is enabled.",
   "Guardrails: do not diagnose, do not prescribe, do not invent findings, and escalate clearly if red flag symptoms are reported."
 ].join(" ");
 
 const predefinedAgentTurns = [
-  "Hi, I am your intake copilot. To start, where is your main pain located?",
+  "Hi, I am your intake copilot. To start, what is your main concern or reason for visiting today?",
   "Thanks. When did this pain begin, and has it changed over time?",
   "What activities make it worse, and what helps ease it?",
   "Any warning signs like numbness, fever, trauma, or severe night pain?",
@@ -704,7 +704,7 @@ function generateSummary() {
   const includesRedFlag = /(numb|fever|trauma|night pain|weakness)/i.test(combined);
 
   summaryCard.innerHTML = `
-    <h4>CHIEF COMPLAINT</h4>
+    <h4>REASON FOR VISIT</h4>
     <p>${patientReplies[0] || "Lower back pain with activity-related discomfort."}</p>
 
     <h4>FUNCTIONAL LIMITATIONS</h4>

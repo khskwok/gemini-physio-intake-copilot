@@ -12,13 +12,18 @@ We used the Gemini Live API and the Google GenAI SDK to create a low-latency aud
 
 The current prototype is a single Cloud Run service that:
 
+- Runs a Node.js and Express server for the UI and backend API
 - Serves the web UI
 - Proxies text chat requests through a backend API
 - Publishes runtime config to the browser
 - Mints short-lived Gemini Live ephemeral tokens so the browser can open a secure Live session without a long-lived API key in the client
 
+The service is containerized with Docker and deployed to Google Cloud Run. The Docker image installs the Node.js dependencies, starts `server.js`, and exposes the HTTP service on port `8080`.
+
 ### Implementation Snapshot
 
+- Server runtime: Node.js with Express
+- Containerization: Docker image built from the repo Dockerfile and deployed to Cloud Run
 - Gemini Live model: `gemini-2.5-flash-native-audio-preview-12-2025`
 - Browser connection path: browser loads runtime config from Cloud Run, requests a short-lived ephemeral token from `/api/live/token`, then opens a Gemini Live WebSocket directly to Gemini with that token
 - Cloud Run role: serves the UI, publishes runtime config, mints secure Live tokens, and provides a typed `/api/chat` fallback path
@@ -40,8 +45,10 @@ Build a live, multimodal physiotherapy intake copilot that can:
 ### High-Level Components
 
 - Web frontend for patient and clinician session UI
+- Node.js and Express application server for static hosting and API endpoints
+- Docker image packaging for portable deployment to Cloud Run
 - Gemini Live API session layer for real-time voice interaction
-- Cloud Run backend for secure token issuance, runtime config, and text fallback/chat endpoints
+- Cloud Run backend runtime for secure token issuance, runtime config, and text fallback/chat endpoints
 - Database layer for transcript, summary, and session metadata persistence
 - Observability layer for deployment checks and runtime health validation
 
@@ -49,8 +56,10 @@ Build a live, multimodal physiotherapy intake copilot that can:
 
 ```mermaid
 flowchart LR
+	SRC[Source Repo\nNode.js + Express + static UI] -->|Docker build| IMG[Docker Image]
+	IMG -->|Deploy| BE[Cloud Run Backend\nNode.js container]
 	U[Patient + Clinician in Browser] --> FE[Web Frontend\nComposer + Transcript + Voice Controls]
-	FE -->|GET /api/config| BE[Cloud Run Backend]
+	FE -->|GET /api/config| BE
 	FE -->|POST /api/live/token| BE
 	BE -->|Mint short-lived token| GL[Gemini Live API\ngemini-2.5-flash-native-audio-preview-12-2025]
 	FE -->|Secure Live WebSocket with ephemeral token| GL
@@ -63,14 +72,16 @@ flowchart LR
 
 ### Runtime Flow
 
-1. Browser loads runtime config from the Cloud Run backend.
-2. On deployed environments, the frontend requests a short-lived Gemini Live ephemeral token from `/api/live/token`.
-3. Browser opens a Gemini Live session with that token and streams push-to-talk audio.
-4. Gemini returns audio and transcription updates to the UI.
-5. If Live is unavailable, the backend text endpoint can still handle typed intake turns.
-6. Cloud Run acts as the control plane for runtime config, token issuance, health checks, and text fallback.
-7. The database is the persistence target for transcripts, summaries, and session metadata as the production data layer is connected.
-8. At session end, the UI generates a structured clinician-facing summary for review.
+1. The repo is built into a Docker image that packages the Node.js and Express server plus the browser assets.
+2. That Docker image is deployed to Cloud Run as the application runtime.
+3. Browser loads runtime config from the Cloud Run backend.
+4. On deployed environments, the frontend requests a short-lived Gemini Live ephemeral token from `/api/live/token`.
+5. Browser opens a Gemini Live session with that token and streams push-to-talk audio.
+6. Gemini returns audio and transcription updates to the UI.
+7. If Live is unavailable, the backend text endpoint can still handle typed intake turns.
+8. Cloud Run acts as the control plane for runtime config, token issuance, health checks, and text fallback.
+9. The database is the persistence target for transcripts, summaries, and session metadata as the production data layer is connected.
+10. At session end, the UI generates a structured clinician-facing summary for review.
 
 ### Safety and Guardrails
 
