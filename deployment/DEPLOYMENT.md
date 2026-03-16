@@ -37,9 +37,11 @@ gcloud config set project "$PROJECT_ID"
 ## Architecture Summary
 
 - Frontend: Browser app with transcript, push-to-talk audio, optional video preview, and clinician summary UI.
-- Backend: Lightweight API service deployed to Google Cloud Run.
+- Backend: Node.js and Express API service deployed to Google Cloud Run.
+- Containerization: Docker image built from the repository Dockerfile and deployed to Cloud Run.
 - Live auth: Backend-minted Gemini Live ephemeral tokens for secure browser Live sessions.
 - Secret management: Secret Manager for the long-lived Gemini API key.
+- Persistence: Planned next-phase enhancement for transcripts, summaries, and session metadata.
 
 ## Prerequisites
 
@@ -47,7 +49,8 @@ gcloud config set project "$PROJECT_ID"
 - Google Cloud CLI (gcloud) installed and authenticated.
 - Docker installed for container builds (or use Cloud Build only).
 - Gemini API access configured.
-- IAM permissions for Cloud Run, Artifact Registry, Secret Manager, and database services.
+- IAM permissions for Cloud Run, Artifact Registry, and Secret Manager.
+- Optional for planned persistence work: IAM permissions for database or storage services.
 
 ### Install Google Cloud CLI
 
@@ -93,7 +96,7 @@ Enable these services in GCP:
 - artifactregistry.googleapis.com
 - cloudbuild.googleapis.com
 - secretmanager.googleapis.com
-- sqladmin.googleapis.com (if using Cloud SQL)
+- sqladmin.googleapis.com (optional, only if adding Cloud SQL later)
 
 Example:
 
@@ -114,8 +117,8 @@ Store sensitive values in Secret Manager (Google Cloud equivalent of key vault),
 Suggested secrets:
 
 - GEMINI_API_KEY
-- DB_CONNECTION_STRING
-- SESSION_SIGNING_KEY
+- DB_CONNECTION_STRING (optional, only for planned persistence)
+- SESSION_SIGNING_KEY (optional, if session signing is added later)
 
 Example secret creation:
 
