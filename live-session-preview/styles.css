@@ -258,6 +258,15 @@ h1 {
   color: #0d7f5c;
 }
 
+.summary-pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: "Manrope", sans-serif;
+  line-height: 1.55;
+  color: var(--ink);
+}
+
 .config-grid {
   margin-top: 10px;
   display: grid;

@@ -55,6 +55,14 @@ let isPressToTalkActive = false;
 let liveBootstrapPending = false;
 let playbackChain = Promise.resolve();
 let playbackGeneration = 0;
+const transcriptEntries = [];
+
+const PHYSIO_INTAKE_SYSTEM_INSTRUCTION = [
+  "Role: physiotherapy intake assistant.",
+  "Goal: triage and guide a structured intake conversation, ask focused follow-up questions, and prepare a concise standardized summary for the physiotherapist.",
+  "Scope: gather pain history, functional limits, symptom behavior, easing and aggravating factors, relevant history, and red flags; optionally guide simple low-risk movement checks if video is enabled.",
+  "Guardrails: do not diagnose, do not prescribe, do not invent findings, and escalate clearly if red flag symptoms are reported."
+].join(" ");
 
 const predefinedAgentTurns = [
   "Hi, I am your intake copilot. To start, where is your main pain located?",
@@ -73,6 +81,10 @@ function addMessage(role, text) {
   div.textContent = text;
   transcriptEl.appendChild(div);
   transcriptEl.scrollTop = transcriptEl.scrollHeight;
+
+  if (role === "patient" || role === "agent") {
+    transcriptEntries.push({ role, text });
+  }
 }
 
 function setTurn(label, live = false) {
@@ -104,6 +116,13 @@ function updateModeChip() {
 
   modeChip.textContent = "Mock mode";
   modeChip.classList.remove("live");
+}
+
+function getTranscriptPayload() {
+  return transcriptEntries.map((entry) => ({
+    role: entry.role,
+    text: entry.text
+  }));
 }
 
 function getActiveLiveModel() {
@@ -634,6 +653,7 @@ async function startSession() {
   sessionActive = true;
   turnIndex = 0;
   patientReplies.length = 0;
+  transcriptEntries.length = 0;
   transcriptEl.innerHTML = "";
 
   summaryCard.innerHTML = '<p class="empty">Session running. Summary will appear when you end the session.</p>';
@@ -707,7 +727,35 @@ function generateSummary() {
   markDone(c4);
 }
 
-function endSession() {
+async function generateBackendSummary() {
+  const response = await fetch("/api/intake-summary", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      transcript: getTranscriptPayload(),
+      movementObserved: Boolean(camToggle.checked)
+    })
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload?.summary) {
+    throw new Error(payload?.error || `HTTP ${response.status}`);
+  }
+
+  return payload.summary;
+}
+
+function renderTextSummary(summary) {
+  const escaped = summary
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+
+  summaryCard.innerHTML = `<pre class="summary-pre">${escaped}</pre>`;
+  markDone(c4);
+}
+
+async function endSession() {
   sessionActive = false;
   agentSpeaking = false;
 
@@ -725,6 +773,17 @@ function endSession() {
   addMessage("system", "Session ended. Generating structured clinician summary...");
   stopPressToTalk();
   updateVoiceButtonState();
+
+  if (backendConnected && transcriptEntries.length > 0) {
+    try {
+      const summary = await generateBackendSummary();
+      renderTextSummary(summary);
+      return;
+    } catch (err) {
+      addMessage("system", `Backend summary generation failed: ${err?.message || "Unknown error"}`);
+    }
+  }
+
   generateSummary();
 }
 
@@ -765,7 +824,10 @@ async function sendBackendTurn(text) {
     const response = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text })
+      body: JSON.stringify({
+        text,
+        transcript: getTranscriptPayload()
+      })
     });
 
     if (!response.ok) {
@@ -864,7 +926,7 @@ camToggle.addEventListener("change", (e) => {
 });
 
 setTurn("Ready", false);
-addMessage("system", "Preview UI loaded. Connect Live API or continue in mock mode.");
+addMessage("system", `Preview UI loaded. ${PHYSIO_INTAKE_SYSTEM_INSTRUCTION} Connect Live API or continue in mock mode.`);
 sessionStatusChip.classList.add("idle");
 
 async function bootstrap() {

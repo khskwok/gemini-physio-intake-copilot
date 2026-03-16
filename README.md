@@ -17,6 +17,13 @@ The current prototype is a single Cloud Run service that:
 - Publishes runtime config to the browser
 - Mints short-lived Gemini Live ephemeral tokens so the browser can open a secure Live session without a long-lived API key in the client
 
+### Implementation Snapshot
+
+- Gemini Live model: `gemini-2.5-flash-native-audio-preview-12-2025`
+- Browser connection path: browser loads runtime config from Cloud Run, requests a short-lived ephemeral token from `/api/live/token`, then opens a Gemini Live WebSocket directly to Gemini with that token
+- Cloud Run role: serves the UI, publishes runtime config, mints secure Live tokens, and provides a typed `/api/chat` fallback path
+- Database role: persistence layer for transcripts, summaries, and session metadata; this is the next production data layer to connect behind Cloud Run
+
 ## Architecture
 
 This design is optimized for the Gemini Live Agent Challenge in the Live Agents category.
@@ -35,6 +42,7 @@ Build a live, multimodal physiotherapy intake copilot that can:
 - Web frontend for patient and clinician session UI
 - Gemini Live API session layer for real-time voice interaction
 - Cloud Run backend for secure token issuance, runtime config, and text fallback/chat endpoints
+- Database layer for transcript, summary, and session metadata persistence
 - Observability layer for deployment checks and runtime health validation
 
 ### Architecture Diagram
@@ -44,12 +52,13 @@ flowchart LR
 	U[Patient + Clinician in Browser] --> FE[Web Frontend\nComposer + Transcript + Voice Controls]
 	FE -->|GET /api/config| BE[Cloud Run Backend]
 	FE -->|POST /api/live/token| BE
-	BE -->|Mint ephemeral token| GL[Gemini API]
-	FE -->|Live WebSocket with ephemeral token| GL
-	FE -->|POST /api/chat| BE
-	BE -->|generateContent text fallback| GL
-	GL -->|Audio + transcript + text| FE
-	BE --> OBS[Health checks + deployment validation]
+	BE -->|Mint short-lived token| GL[Gemini Live API\ngemini-2.5-flash-native-audio-preview-12-2025]
+	FE -->|Secure Live WebSocket with ephemeral token| GL
+	GL -->|Audio output + input/output transcription| FE
+	FE -->|POST /api/chat typed fallback| BE
+	BE -->|generateContent fallback| GT[Gemini text API]
+	BE -.->|Persist transcripts, summaries,\nsession metadata| DB[(Database)]
+	BE --> OBS[Cloud Run health checks\nand deployment validation]
 ```
 
 ### Runtime Flow
@@ -59,7 +68,9 @@ flowchart LR
 3. Browser opens a Gemini Live session with that token and streams push-to-talk audio.
 4. Gemini returns audio and transcription updates to the UI.
 5. If Live is unavailable, the backend text endpoint can still handle typed intake turns.
-6. At session end, the UI generates a structured clinician-facing summary for review.
+6. Cloud Run acts as the control plane for runtime config, token issuance, health checks, and text fallback.
+7. The database is the persistence target for transcripts, summaries, and session metadata as the production data layer is connected.
+8. At session end, the UI generates a structured clinician-facing summary for review.
 
 ### Safety and Guardrails
 
