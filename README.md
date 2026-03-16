@@ -27,7 +27,7 @@ The service is containerized with Docker and deployed to Google Cloud Run. The D
 - Gemini Live model: `gemini-2.5-flash-native-audio-preview-12-2025`
 - Browser connection path: browser loads runtime config from Cloud Run, requests a short-lived ephemeral token from `/api/live/token`, then opens a Gemini Live WebSocket directly to Gemini with that token
 - Cloud Run role: serves the UI, publishes runtime config, mints secure Live tokens, and provides a typed `/api/chat` fallback path
-- Database role: persistence layer for transcripts, summaries, and session metadata; this is the next production data layer to connect behind Cloud Run
+- Persistence layer: planned next-phase enhancement for transcripts, summaries, and session metadata behind Cloud Run
 
 ## Architecture
 
@@ -49,7 +49,7 @@ Build a live, multimodal physiotherapy intake copilot that can:
 - Docker image packaging for portable deployment to Cloud Run
 - Gemini Live API session layer for real-time voice interaction
 - Cloud Run backend runtime for secure token issuance, runtime config, and text fallback/chat endpoints
-- Database layer for transcript, summary, and session metadata persistence
+- Persistence layer (planned) for transcript, summary, and session metadata storage
 - Observability layer for deployment checks and runtime health validation
 
 ### Architecture Diagram
@@ -66,7 +66,7 @@ flowchart LR
 	GL -->|Audio output + input/output transcription| FE
 	FE -->|POST /api/chat typed fallback| BE
 	BE -->|generateContent fallback| GT[Gemini text API]
-	BE -.->|Persist transcripts, summaries,\nsession metadata| DB[(Database)]
+	BE -.->|Planned persistence for transcripts,\nsummaries, and session metadata| DB[(Persistence Layer\nplanned)]
 	BE --> OBS[Cloud Run health checks\nand deployment validation]
 ```
 
@@ -80,7 +80,7 @@ flowchart LR
 6. Gemini returns audio and transcription updates to the UI.
 7. If Live is unavailable, the backend text endpoint can still handle typed intake turns.
 8. Cloud Run acts as the control plane for runtime config, token issuance, health checks, and text fallback.
-9. The database is the persistence target for transcripts, summaries, and session metadata as the production data layer is connected.
+9. A planned persistence layer will store transcripts, summaries, and session metadata once that next-phase enhancement is implemented.
 10. At session end, the UI generates a structured clinician-facing summary for review.
 
 ### Safety and Guardrails
