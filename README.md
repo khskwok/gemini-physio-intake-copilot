@@ -129,4 +129,4 @@ python -m http.server 5500
 
 Then open: `http://localhost:5500/live-session-preview/`
 
-For current deployment details and Gemini Live test instructions, see [deployment/DEPLOYMENT.MD](deployment/DEPLOYMENT.MD).
+For current deployment details and Gemini Live test instructions, see [deployment/DEPLOYMENT.md](deployment/DEPLOYMENT.md).
