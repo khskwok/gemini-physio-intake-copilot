@@ -143,6 +143,7 @@ This repository now includes a Cloud Run server (`server.js`) that:
 - Serves the UI from `live-session-preview/`
 - Uses Secret Manager-injected `GEMINI_API_KEY` on the server side
 - Exposes `/api/chat` so browser clients do not store or send API keys
+- Exposes `/api/intake-summary` so the UI can request a structured clinician-facing summary at session end
 - Exposes `/api/config` so the frontend can load runtime configuration instead of hardcoding models
 - Exposes `/api/live/health` so deployments can verify Gemini Live model readiness
 
@@ -153,6 +154,7 @@ Current deployed interaction model:
 - Backend mints a constrained short-lived Gemini Live token using the server-side API key.
 - Browser uses that token directly with Gemini Live WebSocket.
 - `/api/chat` remains available as a typed fallback path.
+- `/api/intake-summary` generates a structured summary from the current transcript.
 
 Runtime parameters are environment-driven. The app reads these variables at startup:
 
@@ -254,6 +256,11 @@ curl -X POST "$SERVICE_URL/api/live/token" \
 curl -X POST "$SERVICE_URL/api/chat" \
   -H "Content-Type: application/json" \
   -d '{"text":"knee pain when climbing stairs for 2 weeks"}'
+
+# Intake summary
+curl -X POST "$SERVICE_URL/api/intake-summary" \
+  -H "Content-Type: application/json" \
+  -d '{"transcript":[{"role":"patient","text":"I have knee pain going downstairs."}],"movementObserved":false}'
 ```
 
 ## Post-Deployment Live Status Check Script
@@ -299,6 +306,8 @@ Verified endpoints:
 - `/api/live/health`
 - `/api/live/token`
 - `/api/chat`
+
+The current post-deploy script validates the live connection and chat paths. Intake summary generation is available through `/api/intake-summary` and can be tested separately with the example curl request above.
 
 ## Enable Gemini Live API Session (Test)
 
@@ -421,13 +430,13 @@ After each deployment, verify:
 - Health endpoint returns 200.
 - Frontend connects to backend successfully.
 - Live audio session starts and receives model responses.
-- Transcript and summary records are persisted.
-- Red flag extraction appears in structured output.
+- Summary generation through `/api/intake-summary` returns structured output.
+- Red flag extraction appears in generated chat or summary output when relevant.
 - Logs show no repeated auth or timeout failures.
 
 ## Rollback Strategy
 
-- Keep at least one previous stable revision for backend and frontend.
+- Keep at least one previous stable Cloud Run revision.
 - Roll back by routing traffic to the previous revision.
 - Restore previous secret version if config regression is detected.
 
@@ -440,15 +449,23 @@ gcloud run services update-traffic "$SERVICE" \
   --project "$PROJECT_ID"
 ```
 
-## CI/CD Recommendation
+## CI/CD Coverage
 
-Use CI/CD to automate:
+The current GitHub Actions pipeline automates:
 
-- Lint and tests.
-- Container build and vulnerability scan.
-- Deployment to staging.
-- Smoke tests.
-- Manual approval gate for production.
+- Dependency installation with `npm ci`
+- Server syntax validation with `node --check server.js`
+- Docker image build validation on pull requests
+- Docker image build and push to Artifact Registry on pushes to `main`
+- Deployment to the Cloud Run production service on pushes to `main`
+- Post-deploy smoke checks for `/api/health` and `/api/live/health`
+
+Not yet implemented in the current workflow:
+
+- Unit or integration tests beyond syntax validation
+- Vulnerability scanning
+- Separate staging environment
+- Manual approval gates for production
 
 ## GitHub Actions CI/CD (Implemented)
 
@@ -574,9 +591,6 @@ gcloud run services delete "$SERVICE" \
   --region "$REGION" \
   --project "$PROJECT_ID" \
   --quiet
-
-# If you created a separate frontend service name, delete it too.
-# gcloud run services delete "YOUR_FRONTEND_SERVICE" --region "$REGION" --project "$PROJECT_ID" --quiet
 ```
 
 ### 2. Delete Artifact Registry Images or Repository

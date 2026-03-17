@@ -15,6 +15,7 @@ The current prototype is a single Cloud Run service that:
 - Runs a Node.js and Express server for the UI and backend API
 - Serves the web UI
 - Proxies text chat requests through a backend API
+- Generates clinician-facing intake summaries through a backend API
 - Publishes runtime config to the browser
 - Mints short-lived Gemini Live ephemeral tokens so the browser can open a secure Live session without a long-lived API key in the client
 
@@ -26,8 +27,14 @@ The service is containerized with Docker and deployed to Google Cloud Run. The D
 - Containerization: Docker image built from the repo Dockerfile and deployed to Cloud Run
 - Gemini Live model: `gemini-2.5-flash-native-audio-preview-12-2025`
 - Browser connection path: browser loads runtime config from Cloud Run, requests a short-lived ephemeral token from `/api/live/token`, then opens a Gemini Live WebSocket directly to Gemini with that token
-- Cloud Run role: serves the UI, publishes runtime config, mints secure Live tokens, and provides a typed `/api/chat` fallback path
+- Cloud Run role: serves the UI, publishes runtime config, mints secure Live tokens, provides a typed `/api/chat` fallback path, and generates intake summaries through `/api/intake-summary`
 - Persistence layer: planned next-phase enhancement for transcripts, summaries, and session metadata behind Cloud Run
+
+### CI/CD Snapshot
+
+- GitHub Actions workflow: `.github/workflows/gcp-cloud-run-cicd.yml`
+- Pull requests to `main`: run `npm ci`, `node --check server.js`, and a Docker build validation
+- Pushes to `main`: rerun CI, build and push the Docker image to Artifact Registry, deploy to Cloud Run, and smoke-test the deployed service
 
 ## Architecture
 
@@ -47,8 +54,10 @@ Build a live, multimodal physiotherapy intake copilot that can:
 - Web frontend for patient and clinician session UI
 - Node.js and Express application server for static hosting and API endpoints
 - Docker image packaging for portable deployment to Cloud Run
+- GitHub Actions CI/CD pipeline for build, deploy, and smoke-test automation
 - Gemini Live API session layer for real-time voice interaction
 - Cloud Run backend runtime for secure token issuance, runtime config, and text fallback/chat endpoints
+- Summary generation endpoint for clinician-facing structured intake output
 - Persistence layer (planned) for transcript, summary, and session metadata storage
 - Observability layer for deployment checks and runtime health validation
 
@@ -65,9 +74,13 @@ flowchart LR
 	FE -->|Secure Live WebSocket with ephemeral token| GL
 	GL -->|Audio output + input/output transcription| FE
 	FE -->|POST /api/chat typed fallback| BE
+	FE -->|POST /api/intake-summary| BE
 	BE -->|generateContent fallback| GT[Gemini text API]
+	BE -->|generate structured summary| GT
 	BE -.->|Planned persistence for transcripts,\nsummaries, and session metadata| DB[(Persistence Layer\nplanned)]
 	BE --> OBS[Cloud Run health checks\nand deployment validation]
+	SRC -->|GitHub Actions CI/CD| AR[Artifact Registry]
+	AR -->|Deploy image| BE
 ```
 
 ### Runtime Flow
@@ -79,9 +92,9 @@ flowchart LR
 5. Browser opens a Gemini Live session with that token and streams push-to-talk audio.
 6. Gemini returns audio and transcription updates to the UI.
 7. If Live is unavailable, the backend text endpoint can still handle typed intake turns.
-8. Cloud Run acts as the control plane for runtime config, token issuance, health checks, and text fallback.
-9. A planned persistence layer will store transcripts, summaries, and session metadata once that next-phase enhancement is implemented.
-10. At session end, the UI generates a structured clinician-facing summary for review.
+8. At session end, the UI sends the transcript to `/api/intake-summary` to generate a structured clinician-facing summary.
+9. Cloud Run acts as the control plane for runtime config, token issuance, health checks, text fallback, and summary generation.
+10. A planned persistence layer will store transcripts, summaries, and session metadata once that next-phase enhancement is implemented.
 
 ### Safety and Guardrails
 
@@ -112,7 +125,7 @@ We also plan to improve session-state UX around secure Live connection startup, 
 
 ## Hackathon Assets
 
-- Deployment guide: [deployment/DEPLOYMENT.MD](deployment/DEPLOYMENT.MD)
+- Deployment guide: [deployment/DEPLOYMENT.md](deployment/DEPLOYMENT.md)
 
 ## Live Session UI Preview
 
