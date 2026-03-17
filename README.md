@@ -33,8 +33,9 @@ The service is containerized with Docker and deployed to Google Cloud Run. The D
 ### CI/CD Snapshot
 
 - GitHub Actions workflow: `.github/workflows/gcp-cloud-run-cicd.yml`
-- Pull requests to `main`: run `npm ci`, `node --check server.js`, and a Docker build validation
-- Pushes to `main`: rerun CI, build and push the Docker image to Artifact Registry, deploy to Cloud Run, and smoke-test the deployed service
+- Manual dispatch is supported through GitHub Actions
+- Pull requests to `main` or `master`: run `npm ci`, `node --check server.js`, and a Docker build validation
+- Pushes to `main` or `master`: rerun CI, build and push the Docker image to Artifact Registry, deploy to Cloud Run, and smoke-test the deployed service
 
 ## Architecture
 

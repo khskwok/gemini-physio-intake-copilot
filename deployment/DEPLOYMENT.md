@@ -475,8 +475,9 @@ This repository now includes a GitHub Actions pipeline at:
 
 Pipeline behavior:
 
-- Pull requests to `main`: run CI checks (`npm ci`, `node --check`, Docker build validation)
-- Pushes to `main`: run CI, then build and push a Docker image to Artifact Registry, deploy to Cloud Run, and run smoke checks
+- Manual dispatch: run the full CI and deployment workflow on demand
+- Pull requests to `main` or `master`: run CI checks (`npm ci`, `node --check`, Docker build validation)
+- Pushes to `main` or `master`: run CI, then build and push a Docker image to Artifact Registry, deploy to Cloud Run, and run smoke checks
 
 ### Required GitHub Repository Variables
 

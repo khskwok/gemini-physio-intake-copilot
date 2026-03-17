@@ -57,8 +57,13 @@ jobs:
 
       - name: Resolve defaults and validate inputs
         shell: bash
+        env:
+          WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          SERVICE_ACCOUNT_EMAIL: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
         run: |
           set -euo pipefail
+
+          missing=()
 
           PROJECT_ID="${GCP_PROJECT_ID}"
           REGION="${GCP_REGION:-us-central1}"
@@ -66,7 +71,20 @@ jobs:
           SERVICE="${CLOUD_RUN_SERVICE:-physio-intake-copilot}"
 
           if [[ -z "$PROJECT_ID" ]]; then
-            echo "GCP_PROJECT_ID repository variable is required."
+            missing+=("Repository variable GCP_PROJECT_ID")
+          fi
+
+          if [[ -z "${WORKLOAD_IDENTITY_PROVIDER:-}" ]]; then
+            missing+=("Repository secret GCP_WORKLOAD_IDENTITY_PROVIDER")
+          fi
+
+          if [[ -z "${SERVICE_ACCOUNT_EMAIL:-}" ]]; then
+            missing+=("Repository secret GCP_SERVICE_ACCOUNT_EMAIL")
+          fi
+
+          if (( ${#missing[@]} > 0 )); then
+            printf '::error::Missing GitHub Actions configuration: %s\n' "$(IFS=', '; echo "${missing[*]}")"
+            echo "Configure repository settings at: Settings -> Secrets and variables -> Actions"
             exit 1
           fi
 
@@ -74,6 +92,11 @@ jobs:
           echo "REGION=$REGION" >> "$GITHUB_ENV"
           echo "REPO=$REPO" >> "$GITHUB_ENV"
           echo "SERVICE=$SERVICE" >> "$GITHUB_ENV"
+
+          echo "Using PROJECT_ID=$PROJECT_ID"
+          echo "Using REGION=$REGION"
+          echo "Using ARTIFACT_REPO=$REPO"
+          echo "Using CLOUD_RUN_SERVICE=$SERVICE"
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
