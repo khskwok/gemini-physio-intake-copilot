@@ -450,6 +450,96 @@ Use CI/CD to automate:
 - Smoke tests.
 - Manual approval gate for production.
 
+## GitHub Actions CI/CD (Implemented)
+
+This repository now includes a GitHub Actions pipeline at:
+
+- `.github/workflows/gcp-cloud-run-cicd.yml`
+
+Pipeline behavior:
+
+- Pull requests to `main`: run CI checks (`npm ci`, `node --check`, Docker build validation)
+- Pushes to `main`: run CI, then build and push a Docker image to Artifact Registry, deploy to Cloud Run, and run smoke checks
+
+### Required GitHub Repository Variables
+
+Set these in GitHub: `Settings` -> `Secrets and variables` -> `Actions` -> `Variables`.
+
+- `GCP_PROJECT_ID` (required) for example `physio-intake-copilot`
+- `GCP_REGION` (optional, defaults to `us-central1`)
+- `ARTIFACT_REPO` (optional, defaults to `physio-intake-copilot`)
+- `CLOUD_RUN_SERVICE` (optional, defaults to `physio-intake-copilot`)
+
+### Required GitHub Repository Secrets
+
+Set these in GitHub: `Settings` -> `Secrets and variables` -> `Actions` -> `Secrets`.
+
+- `GCP_WORKLOAD_IDENTITY_PROVIDER` in this format:
+  `projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL_ID/providers/PROVIDER_ID`
+- `GCP_SERVICE_ACCOUNT_EMAIL` for example:
+  `github-deployer@physio-intake-copilot.iam.gserviceaccount.com`
+
+### One-Time GCP Setup for Secure GitHub OIDC Auth
+
+Use Workload Identity Federation so GitHub can deploy without storing a static JSON key.
+
+```bash
+PROJECT_ID="physio-intake-copilot"
+PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')"
+POOL_ID="github-pool"
+PROVIDER_ID="github-provider"
+GITHUB_REPO="YOUR_GITHUB_ORG_OR_USER/YOUR_REPOSITORY"
+DEPLOYER_SA="github-deployer@$PROJECT_ID.iam.gserviceaccount.com"
+
+# Create deployer service account
+gcloud iam service-accounts create github-deployer \
+  --display-name="GitHub Actions Cloud Run Deployer" \
+  --project "$PROJECT_ID"
+
+# Minimum deploy permissions
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:$DEPLOYER_SA" \
+  --role="roles/run.admin"
+
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:$DEPLOYER_SA" \
+  --role="roles/artifactregistry.writer"
+
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:$DEPLOYER_SA" \
+  --role="roles/iam.serviceAccountUser"
+
+# Needed so deployer can bind secret refs during deploy
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:$DEPLOYER_SA" \
+  --role="roles/secretmanager.secretAccessor"
+
+# Create workload identity pool and provider
+gcloud iam workload-identity-pools create "$POOL_ID" \
+  --project="$PROJECT_ID" \
+  --location="global" \
+  --display-name="GitHub Actions Pool"
+
+gcloud iam workload-identity-pools providers create-oidc "$PROVIDER_ID" \
+  --project="$PROJECT_ID" \
+  --location="global" \
+  --workload-identity-pool="$POOL_ID" \
+  --display-name="GitHub OIDC Provider" \
+  --issuer-uri="https://token.actions.githubusercontent.com" \
+  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository"
+
+# Allow only this GitHub repo to impersonate deployer SA
+gcloud iam service-accounts add-iam-policy-binding "$DEPLOYER_SA" \
+  --project="$PROJECT_ID" \
+  --role="roles/iam.workloadIdentityUser" \
+  --member="principalSet://iam.googleapis.com/projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/$POOL_ID/attribute.repository/$GITHUB_REPO"
+```
+
+After setup, configure GitHub secrets:
+
+- `GCP_WORKLOAD_IDENTITY_PROVIDER=projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/$POOL_ID/providers/$PROVIDER_ID`
+- `GCP_SERVICE_ACCOUNT_EMAIL=$DEPLOYER_SA`
+
 ## Compliance and Safety Notes
 
 This system should support clinicians and must not be treated as autonomous diagnosis.

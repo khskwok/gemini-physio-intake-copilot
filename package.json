@@ -10,5 +10,8 @@
   "dependencies": {
     "@google/genai": "^1.14.0",
     "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "@k-jarzyna/mcp-miro": "^1.0.9"
   }
 }

@@ -1,0 +1,120 @@
+name: GCP Cloud Run CI/CD
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  GCP_REGION: ${{ vars.GCP_REGION }}
+  ARTIFACT_REPO: ${{ vars.ARTIFACT_REPO }}
+  CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
+
+jobs:
+  ci:
+    name: CI
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate server syntax
+        run: node --check server.js
+
+      - name: Docker build check
+        run: docker build -t local-build-check:${{ github.sha }} .
+
+  deploy:
+    name: Deploy to Cloud Run
+    needs: ci
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve defaults and validate inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PROJECT_ID="${GCP_PROJECT_ID}"
+          REGION="${GCP_REGION:-us-central1}"
+          REPO="${ARTIFACT_REPO:-physio-intake-copilot}"
+          SERVICE="${CLOUD_RUN_SERVICE:-physio-intake-copilot}"
+
+          if [[ -z "$PROJECT_ID" ]]; then
+            echo "GCP_PROJECT_ID repository variable is required."
+            exit 1
+          fi
+
+          echo "PROJECT_ID=$PROJECT_ID" >> "$GITHUB_ENV"
+          echo "REGION=$REGION" >> "$GITHUB_ENV"
+          echo "REPO=$REPO" >> "$GITHUB_ENV"
+          echo "SERVICE=$SERVICE" >> "$GITHUB_ENV"
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
+
+      - name: Build and push image
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE_URI="$REGION-docker.pkg.dev/$PROJECT_ID/$REPO/$SERVICE:${GITHUB_SHA}"
+          echo "IMAGE_URI=$IMAGE_URI" >> "$GITHUB_ENV"
+
+          docker build -t "$IMAGE_URI" .
+          docker push "$IMAGE_URI"
+
+      - name: Deploy to Cloud Run
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gcloud run deploy "$SERVICE" \
+            --image "$IMAGE_URI" \
+            --region "$REGION" \
+            --platform managed \
+            --allow-unauthenticated \
+            --set-env-vars GEMINI_MODEL=gemini-2.5-flash,GEMINI_LIVE_MODEL=gemini-2.5-flash-native-audio-preview-12-2025,GEMINI_LIVE_API_VERSION=v1alpha,GEMINI_LIVE_RESPONSE_MODALITIES=AUDIO,GEMINI_LIVE_INPUT_AUDIO_TRANSCRIPTION=true,GEMINI_LIVE_OUTPUT_AUDIO_TRANSCRIPTION=true,GEMINI_LIVE_EPHEMERAL_ENABLED=true,GEMINI_LIVE_EPHEMERAL_USES=1,GEMINI_LIVE_EPHEMERAL_EXPIRE_MINUTES=30,GEMINI_LIVE_EPHEMERAL_NEW_SESSION_EXPIRE_SECONDS=60 \
+            --set-secrets GEMINI_API_KEY=GEMINI_API_KEY:latest \
+            --project "$PROJECT_ID"
+
+      - name: Smoke test deployed service
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SERVICE_URL="$(gcloud run services describe "$SERVICE" --region "$REGION" --format='value(status.url)' --project "$PROJECT_ID")"
+          echo "Service URL: $SERVICE_URL"
+
+          curl --fail --silent --show-error "$SERVICE_URL/api/health" > /dev/null
+          curl --fail --silent --show-error "$SERVICE_URL/api/live/health" > /dev/null
